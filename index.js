@@ -15,13 +15,11 @@ require("dotenv").config();
 const SPACER = "⠀";
 
 function centerText(text, targetLength = 16) {
-  // Falls der Text schon zu lang ist, lassen wir ihn so
   if (text.length >= targetLength) return text;
 
   const totalPadding = targetLength - text.length;
   const sidePadding = Math.floor(totalPadding / 2);
 
-  // Wir bauen den String: Leerzeichen links + Text + Leerzeichen rechts
   return (
     SPACER.repeat(sidePadding) +
     text +
@@ -55,7 +53,6 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 })();
 
 client.on("interactionCreate", async (interaction) => {
-  // A. MODAL ÖFFNEN: Wenn /report getippt wird
   if (
     interaction.isChatInputCommand() &&
     interaction.commandName === "report"
@@ -64,7 +61,6 @@ client.on("interactionCreate", async (interaction) => {
       .setCustomId("submit_report")
       .setTitle("Match Report");
 
-    // Die 4 Felder (Identisch wie vorher)
     modal.addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -96,20 +92,22 @@ client.on("interactionCreate", async (interaction) => {
       )
     );
 
-    // WICHTIG: Das muss die ERSTE Antwort auf den Befehl sein!
+    // Niemals hier was ändern
     await interaction.showModal(modal);
   }
 
-  // B. DATEN VERARBEITEN (Identisch wie vorher)
   if (interaction.isModalSubmit() && interaction.customId === "submit_report") {
     try {
       const winner = capitalize(interaction.fields.getTextInputValue("winner"));
       const loser = capitalize(interaction.fields.getTextInputValue("loser"));
       const score = interaction.fields.getTextInputValue("score");
       const link = interaction.fields.getTextInputValue("link");
+      const players = [winner, loser];
+      const firstPlayer = players[Math.floor(Math.random() * players.length)];
+      const secondPlayer = players.find((p) => p !== firstPlayer);
 
       const resultEmbed = new EmbedBuilder()
-        .setTitle(`🏆 Liga Match: ${winner} vs. ${loser}`)
+        .setTitle(`🏆 Liga Match: ${firstPlayer} vs. ${secondPlayer}`)
         .setColor("#FFD700")
         .addFields(
           {
@@ -132,13 +130,10 @@ client.on("interactionCreate", async (interaction) => {
         .setFooter({ text: `Eingetragen von ${interaction.user.username}` })
         .setTimestamp();
 
-      // Ins Channel senden
       await interaction.channel.send({
         embeds: [resultEmbed],
-        //flags: [MessageFlags.SuppressEmbeds], // Suppress Embeds (Vorschau unterdrücken)
       });
 
-      // Dem User, der den Befehl ausgeführt hat, eine "unsichtbare" Bestätigung geben
       await interaction.reply({
         content: "✅ Ergebnis erfolgreich gepostet!",
         flags: [MessageFlags.Ephemeral], // Nur für den User sichtbar
