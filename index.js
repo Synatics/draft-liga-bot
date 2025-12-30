@@ -127,9 +127,9 @@ client.on("interactionCreate", async (interaction) => {
           },
           { name: "Replay Link", value: link, inline: false }
         )
-        .setFooter({
+        /* .setFooter({
           text: `Eingetragen von ${centerText(interaction.user.username)}`,
-        })
+        }) */
         .setTimestamp();
 
       await interaction.channel.send({
