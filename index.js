@@ -65,15 +65,15 @@ client.on("interactionCreate", async (interaction) => {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("winner")
-          .setLabel("Gewinner (Vorname)")
-          .setPlaceholder("z.B. Ash")
+          .setLabel("Gewinner")
+          .setPlaceholder("z.B. Jan")
           .setStyle(TextInputStyle.Short)
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("loser")
-          .setLabel("Verlierer (Vorname)")
-          .setPlaceholder("z.B. Gary")
+          .setLabel("Verlierer")
+          .setPlaceholder("z.B. Lennart")
           .setStyle(TextInputStyle.Short)
       ),
       new ActionRowBuilder().addComponents(
@@ -127,7 +127,9 @@ client.on("interactionCreate", async (interaction) => {
           },
           { name: "Replay Link", value: link, inline: false }
         )
-        .setFooter({ text: `Eingetragen von ${interaction.user.username}` })
+        .setFooter({
+          text: `Eingetragen von ${centerText(interaction.user.username)}`,
+        })
         .setTimestamp();
 
       await interaction.channel.send({
