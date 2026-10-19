@@ -55,7 +55,8 @@ test("league settings, reports and role changes work together without exposing r
   initialStore.setSeason(guild.id, 3, 9, "31.08.2026");
   const client = new EventEmitter();
   client.guilds = { cache: new discord.Collection([[guild.id, guild]]) };
-  client.login = async () => {};
+  client.login = async () => { client.emit(discord.Events.ClientReady); };
+  client.destroy = async () => {};
   const source = readFileSync(require.resolve("./index"), "utf8");
   let registeredCommands;
   let failSaving = false;
@@ -75,12 +76,30 @@ test("league settings, reports and role changes work together without exposing r
         REST: class {
           setToken() { return this; }
           async put(route, { body }) { registeredCommands = body; }
+          clearHashSweeper() {}
+          clearHandlerSweeper() {}
         },
       };
       if (name === "dotenv") return { config() {} };
-      if (name === "node:path") return require(name);
       if (name === "./reports") return reports;
       if (name === "./report-publisher") return require(name);
+      if (name === "./startup") return {
+        ...require(name),
+        prepareStartup(env) {
+          const state = require(name).prepareStartup({ ...env, DATA_DIR: directory });
+          state.settingsStore.now = () => now;
+          const save = state.matchStore.save.bind(state.matchStore);
+          state.matchStore.save = (matches) => {
+            if (failSaving) throw new MatchStoreError("Das Replay konnte nicht gespeichert werden.");
+            save(matches);
+          };
+          return state;
+        },
+        connectDiscord(client, rest, commands, config) {
+          return require(name).connectDiscord(client, rest, commands, config, { logger: { log() {} } });
+        },
+        failStartup(error) { errors.push(["Unexpected startup failure", error]); },
+      };
       if (name === "./data-backups") return {
         ...require(name),
         startAutomaticBackups(backups) {
@@ -89,29 +108,17 @@ test("league settings, reports and role changes work together without exposing r
           return timer;
         },
       };
-      if (name === "./match-store") return {
-        ...require(name),
-        MatchStore: class extends MatchStore {
-          save(matches) {
-            if (failSaving) throw new MatchStoreError("Das Replay konnte nicht gespeichert werden.");
-            return super.save(matches);
-          }
-        },
-      };
+      if (name === "./match-store") return require(name);
       if (name === "./search-commands") return searchCommands;
-      if (name === "./league-settings") return {
-        ...leagueSettings,
-        settingsFilePath: () => settingsPath,
-        LeagueSettingsStore: class extends leagueSettings.LeagueSettingsStore {
-          constructor(path) { super(path, () => now); }
-        },
-      };
+      if (name === "./league-settings") return leagueSettings;
       if (name === "./league-commands") return leagueCommands;
       throw new Error(`Unexpected dependency: ${name}`);
     },
-    process: { env: { PARTICIPANT_ROLE_ID: roleId, CLIENT_ID: "test", DISCORD_TOKEN: "test" } },
+    process: { env: { PARTICIPANT_ROLE_ID: roleId, CLIENT_ID: "600000000000000001", DISCORD_TOKEN: "test-token" } },
     console: { log() {}, error(...args) { errors.push(args); } },
   });
+  await new Promise(setImmediate);
+  assert.equal(errors.length, 0);
   const listener = client.listeners(discord.Events.InteractionCreate)[0];
   const handle = (interaction) => {
     interaction.isAutocomplete ||= () => false;
@@ -120,7 +127,6 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(registeredCommands.find((command) => command.name === "liga").default_member_permissions,
     discord.PermissionFlagsBits.ManageGuild.toString());
   assert.equal(registeredCommands.find((command) => command.name === "suchen").options[1].autocomplete, true);
-  client.emit(discord.Events.ClientReady);
 
   const command = {
     guild, commandName: "report", isChatInputCommand: () => true, isModalSubmit: () => false,

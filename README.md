@@ -116,7 +116,7 @@ PARTICIPANT_ROLE_ID=deine-teilnehmerrollen-id
 | --- | --- | --- |
 | `DISCORD_TOKEN` | Ja | Bot-Token der eigenen Discord-Anwendung |
 | `CLIENT_ID` | Ja | Application ID derselben Anwendung; muss zum Token passen |
-| `PARTICIPANT_ROLE_ID` | Ja, für `/report` | ID der Teilnehmerrolle auf dem Liga-Server |
+| `PARTICIPANT_ROLE_ID` | Ja | ID der Teilnehmerrolle auf dem Liga-Server; wird für `/report` verwendet |
 | `DATA_DIR` | Nein | Verzeichnis für beide JSON-Dateien; relative Pfade beziehen sich auf das Arbeitsverzeichnis des Prozesses |
 | `RAILWAY_VOLUME_MOUNT_PATH` | Automatisch auf Railway | Von Railway gesetzter Mount-Pfad des verbundenen Volumes |
 | `RAILWAY_ENVIRONMENT_ID` | Automatisch auf Railway | Aktiviert die Prüfung, dass ein Railway-Volume vorhanden ist und `DATA_DIR` darin liegt |
@@ -129,14 +129,28 @@ Vom Hosting gesetzte Umgebungsvariablen können anstelle einer `.env` verwendet 
 npm start
 ```
 
-Der Start erfolgt über `node index.js`. Eine erfolgreiche Discord-Verbindung und eine erfolgreiche Befehlsregistrierung werden getrennt protokolliert:
+Der Start erfolgt über `node index.js` mit einer festen Reihenfolge:
+
+1. `DISCORD_TOKEN`, `CLIENT_ID` und `PARTICIPANT_ROLE_ID` auf fehlende bzw. ungültige Werte prüfen. Die IDs müssen aus 17 bis 20 Ziffern bestehen; Beispielwerte werden abgewiesen. Führende und folgende Leerzeichen werden bei diesen drei Werten entfernt. Das Token darf keine Leerzeichen innerhalb des Werts enthalten. Eine ausdrücklich gesetzte, aber leere `DATA_DIR` ist ebenfalls ein Fehler.
+2. Den Datenpfad einschließlich Railway-Volume prüfen. Eine eigene temporäre Datei testet Schreiben, Umbenennen und Entfernen, ohne vorhandene Datendateien umzuschreiben.
+3. Die gespeicherten Liga-Einstellungen und das Replay-Archiv laden und validieren. Bei einer frischen Installation wird ein leeres Archiv angelegt; eine Season muss zu diesem Zeitpunkt noch nicht eingerichtet sein.
+4. Die Slash-Befehle bei Discord registrieren. Bei einem Fehler erfolgt keine Gateway-Anmeldung.
+5. Mit Discord verbinden und auf `ClientReady` warten. Beim Ready-Ereignis beginnt der Mitgliederabruf für die Teilnehmerauswahl.
+6. Die automatischen Backups starten.
+
+Ein erfolgreicher Start protokolliert diese Meldungen:
 
 ```text
-✅ Bot ist mit Discord verbunden.
+✅ Konfiguration und Datenspeicher geprüft.
 ✅ Slash-Befehle bei Discord registriert: /report, /liga, /suchen
+✅ Bot ist mit Discord verbunden.
 ```
 
-Die Reihenfolge der Meldungen kann variieren. Beim Start lädt der Bot einmal die Servermitglieder, damit `/report` das Modal anschließend ohne zusätzliche Ladezeit öffnen kann.
+Bei einem Startfehler erscheint eine verständliche Meldung mit `Bot-Start abgebrochen`, und der Prozess endet mit **Exit-Code 1**. Registrierung und Anmeldung haben zusammen ein Zeitlimit von **60 Sekunden**. Beim Abbruch wird der Client geschlossen; dafür wartet der Bot höchstens weitere fünf Sekunden. Ein fehlgeschlagener Start bleibt damit nicht als scheinbar funktionsfähiger Bot-Prozess laufen. Die Startfehler-Ausgabe enthält keine Token-Werte, rohen Discord-Fehlerobjekte oder Request-Daten.
+
+Die lokale Prüfung eines Tokens betrifft fehlende Werte, den Beispielwert und Leerzeichen; ob es gültig ist und zur `CLIENT_ID` gehört, prüft Discord bei der Registrierung bzw. Anmeldung. Ob die Teilnehmerrolle auf einem konkreten Server existiert, wird weiterhin bei `/report` geprüft. Ein formal gültiger Rollenwert allein bestätigt deshalb noch nicht die korrekte Serverkonfiguration.
+
+Eine noch nicht eingerichtete Season, ein fehlgeschlagenes Backup oder ein gescheiterter Mitgliederabruf sind keine fatalen Startfehler. Die Season lässt sich mit `/liga season` einrichten; Mitgliederabrufe und Backups können erneut versucht werden. Während der erste Mitgliederabruf läuft, bittet `/report` um einen erneuten Aufruf. Nach dem Laden öffnet sich das Formular ohne zusätzlichen Mitgliederabruf.
 
 Alle Slash-Befehle werden bei jedem Start **global für die Anwendung registriert**. Dabei ersetzt der Bot die globale Befehlsliste dieser Anwendung durch `/report`, `/liga` und `/suchen`. Für dieses Projekt sollte daher eine eigene Discord-Anwendung verwendet werden. Ein separates Deploy-Commands-Skript ist nicht nötig.
 
@@ -402,11 +416,12 @@ npm test
 
 Die Tests verwenden den integrierten Node.js-Test-Runner `node:test`, echte discord.js-Komponenten, simulierte Discord-Interaktionen und temporäre Dateien. Sie brauchen weder Bot-Token noch Discord-Verbindung und versenden keine Nachrichten.
 
-Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, tägliche Backups, Aufbewahrung und Wiederherstellung, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
+Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, Speicher- oder Discord-Fehlern, Zeitlimits und tokenfreie Startmeldungen, Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, tägliche Backups, Aufbewahrung und Wiederherstellung, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
 
 | Datei | Aufgabe |
 | --- | --- |
 | [`index.js`](index.js) | Umgebungsvariablen laden, Client starten, Befehle registrieren und Interaktionen verteilen |
+| [`startup.js`](startup.js) | Konfiguration und Datenspeicher prüfen, Discord-Start koordinieren und bei Startfehlern beenden |
 | [`reports.js`](reports.js) | Teilnehmerauswahl, Modal, Validierung und Ergebnis-Embed |
 | [`report-publisher.js`](report-publisher.js) | Persistenter Duplikatschutz und Versand von Ergebnisposts |
 | [`league-commands.js`](league-commands.js) | `/liga`-Definition und Verarbeitung |
@@ -422,8 +437,10 @@ Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerf
 | Problem | Prüfen / Lösung |
 | --- | --- |
 | `npm ci` meldet `EBADENGINE` oder eine nicht unterstützte Node.js-Version | Mit `node --version` die aktive Laufzeit prüfen und Node.js 24 aktivieren; auf Railway zusätzlich eine abweichende `RAILPACK_NODE_VERSION` korrigieren |
+| Bot beendet sich direkt mit `Bot-Start abgebrochen` | Genannte Variable oder Datendatei korrigieren; bei automatischen Railway-Neustarts die erste Startfehlermeldung in den Logs prüfen |
+| Discord-Start wird nach 60 Sekunden abgebrochen | Netzwerkzugriff zu Discord und Zugangsdaten prüfen; bei erfolgreicher Registrierung, aber fehlender Verbindung zusätzlich Server Members Intent kontrollieren |
 | Ein Slash-Befehl fehlt | Registrierungsmeldung im Terminal prüfen; Discord mit Strg+R bzw. im Browser mit F5 neu laden; richtigen Server und richtige Bot-Anwendung prüfen |
-| Registrierung schlägt fehl | `CLIENT_ID` muss zum `DISCORD_TOKEN` gehören; Token, Netzwerkzugriff und Fehlermeldung im Terminal prüfen |
+| Registrierung schlägt fehl | `CLIENT_ID` muss zum `DISCORD_TOKEN` gehören; Token und Netzwerkzugriff prüfen; der Bot bricht den Start ab und meldet sich erst nach erfolgreicher Registrierung an |
 | Nur `/liga` fehlt | Account benötigt Server verwalten; zusätzlich Discord-Integrationsrechte prüfen |
 | Normale Mitglieder können keine Befehle verwenden | Anwendungsbefehle im jeweiligen Kanal und die Freigaben unter Servereinstellungen → Integrationen prüfen |
 | Bot startet mit einem Intent-Fehler | Server Members Intent im Developer Portal aktivieren |
