@@ -85,7 +85,7 @@ async function startBot() {
     const isManagementCommand = (interaction.isMessageContextMenuCommand?.() &&
       ["Report korrigieren", "Report löschen"].includes(interaction.commandName)) ||
       (interaction.isChatInputCommand() && interaction.commandName === "report-entfernen");
-    const isManagementComponent = (interaction.isButton?.() || interaction.isModalSubmit()) &&
+    const isManagementComponent = (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isModalSubmit()) &&
       interaction.customId?.startsWith("manage:");
     const isReportSubmit = interaction.isModalSubmit() && (
       interaction.customId === "submit_report" || interaction.customId.startsWith("submit_report:")
@@ -95,7 +95,7 @@ async function startBot() {
 
     try {
       if (isManagementCommand) {
-        await openManagement(interaction, matchStore, reportManager, participantRoleId);
+        await openManagement(interaction, matchStore, reportManager, participantRoleId, settingsStore);
         return;
       }
       if (isManagementComponent) {

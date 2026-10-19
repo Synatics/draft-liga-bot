@@ -15,7 +15,57 @@ const managementCommands = [
       required: true, max_length: 200 }] },
 ];
 const privateReply = { flags: [MessageFlags.Ephemeral], allowedMentions: { parse: [] } };
-const customId = (action, record, userId) => `manage:${action}:${record.id}:${revisionOf(record)}:${userId}`;
+const customId = (action, record, userId, context) => `manage:${action}:${record.id}:${revisionOf(record)}:${userId}` +
+  (context ? `:${context.season}:${context.matchday}` : "");
+
+function activeSettings(settingsStore, guildId) {
+  try { return settingsStore?.get(guildId); } catch { return undefined; }
+}
+
+function validateContext(context, settingsStore, guildId) {
+  if (!context || !Number.isInteger(context.season) || context.season < 1 || context.season > 9999 ||
+      !Number.isInteger(context.matchday) || context.matchday < 1 || context.matchday > 25) {
+    throw new ReportManagementError("Bitte die Korrektur erneut öffnen und Season und Spieltag auswählen.");
+  }
+  const settings = activeSettings(settingsStore, guildId);
+  if (settings?.season === context.season && context.matchday > settings.matchdays) {
+    throw new ReportManagementError("Dieser Spieltag gehört nicht zur eingerichteten Season. Bitte die Korrektur erneut öffnen.");
+  }
+}
+
+function contextPrompt(interaction, record, store, settingsStore, requested = record, source = interaction.targetMessage || interaction.message) {
+  const settings = activeSettings(settingsStore, record.guildId);
+  const maximum = settings?.season === requested.season ? settings.matchdays : 25;
+  const context = { season: requested.season, matchday: Math.min(requested.matchday, maximum) };
+  const required = new Set([record.season, context.season, ...(settings ? [settings.season] : [])]);
+  const seasons = [...new Set([...store.list(record.guildId).map((match) => match.season), ...required])]
+    .sort((a, b) => b - a);
+  // Reserve a choice for arbitrary season numbers; selected/current seasons always remain visible.
+  const choices = [...required, ...seasons.filter((season) => !required.has(season))].slice(0, 24).sort((a, b) => b - a);
+  return {
+    ...privateReply,
+    content: `**Report korrigieren · Schritt 1 von 2**\nSeason und Spieltag auswählen, dann auf „Weiter“ klicken.\nAusgewählt: **Season ${context.season} · Spieltag ${context.matchday}**`,
+    embeds: source?.embeds?.slice(0, 1) || [],
+    components: [
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+        .setCustomId(customId("season", record, interaction.user.id, context)).setPlaceholder("Season auswählen")
+        .setMinValues(1).setMaxValues(1).addOptions([
+          ...choices.map((season) => ({ label: `Season ${season}`, value: String(season), default: season === context.season })),
+          { label: "Andere Season …", value: "other", description: "Eine andere Season-Nummer eingeben" },
+        ])),
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+        .setCustomId(customId("day", record, interaction.user.id, context)).setPlaceholder("Spieltag auswählen")
+        .setMinValues(1).setMaxValues(1).addOptions(Array.from({ length: maximum }, (_, index) => ({
+          label: `Spieltag ${index + 1}`, value: String(index + 1), default: index + 1 === context.matchday,
+        })))),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(customId("form", record, interaction.user.id, context))
+          .setLabel("Weiter: Ergebnis bearbeiten").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(customId("cancel", record, interaction.user.id)).setLabel("Abbrechen").setStyle(ButtonStyle.Secondary)
+      ),
+    ],
+  };
+}
 
 function authorize(interaction, record) {
   if (!interaction.guild || record.guildId !== interaction.guild.id ||
@@ -70,9 +120,9 @@ function correctionOptions(guild, record, roleId) {
         ? `@${guild.members.cache.get(player.id).user.username}` : `Gespeicherter Teilnehmer · ${player.id}` }));
 }
 
-function correctionModal(interaction, record, roleId) {
-  const message = interaction.targetMessage;
-  const fields = message.embeds[0]?.fields || [];
+function correctionModal(interaction, record, roleId, context = record) {
+  const message = interaction.targetMessage || interaction.message;
+  const fields = message?.embeds?.[0]?.fields || [];
   const options = correctionOptions(interaction.guild, record, roleId);
   const playerSelect = (id, label, field) => {
     const candidates = record.players.filter((player) => player.name === unspoiler(fields.find((entry) => entry.name === field)?.value));
@@ -86,11 +136,9 @@ function correctionModal(interaction, record, roleId) {
   const scoreInput = new TextInputBuilder().setCustomId("score").setStyle(TextInputStyle.Short)
     .setRequired(true).setMaxLength(100).setPlaceholder("z.B. 2-0");
   if (score && score.length <= 100) scoreInput.setValue(score);
-  return new ModalBuilder().setCustomId(customId("edit", record, interaction.user.id)).setTitle("Report korrigieren")
+  return new ModalBuilder().setCustomId(customId("edit", record, interaction.user.id, context))
+    .setTitle(`Report korrigieren · S${context.season} · ST${context.matchday}`)
     .addLabelComponents(
-      new LabelBuilder().setLabel("Season / Spieltag").setDescription("Zum Beispiel 4 / 3 für Season 4, Spieltag 3")
-        .setTextInputComponent(new TextInputBuilder().setCustomId("context").setStyle(TextInputStyle.Short)
-          .setRequired(true).setMaxLength(12).setValue(`${record.season} / ${record.matchday}`)),
       playerSelect("winner", "Gewinner", "Gewinner"), playerSelect("loser", "Verlierer", "Verlierer"),
       new LabelBuilder().setLabel("Ergebnis").setTextInputComponent(scoreInput),
       new LabelBuilder().setLabel("Replay Link").setTextInputComponent(new TextInputBuilder().setCustomId("link")
@@ -118,7 +166,7 @@ function messageReference(value) {
   } catch { throw new ReportManagementError("Bitte einen Discord-Nachrichtenlink zum ursprünglichen Ergebnispost angeben."); }
 }
 
-async function openManagement(interaction, store, manager, roleId) {
+async function openManagement(interaction, store, manager, roleId, settingsStore) {
   if (!interaction.guild) throw new ReportManagementError("Bitte verwende die Aktion auf dem Liga-Server.");
   if (interaction.commandName === "report-entfernen") {
     const ref = messageReference(interaction.options.getString("nachricht", true));
@@ -150,19 +198,13 @@ async function openManagement(interaction, store, manager, roleId) {
     await interaction.editReply({ content: kind === "delete" ? "✅ Die vorgemerkte Löschung wurde abgeschlossen."
       : "✅ Die vorgemerkte Korrektur wurde abgeschlossen. Für weitere Änderungen die Aktion erneut öffnen.", allowedMentions: { parse: [] } });
   } else {
-    await interaction.showModal(correctionModal(interaction, record, roleId));
+    await interaction.reply(contextPrompt(interaction, record, store, settingsStore));
   }
 }
 
-async function correctionData(interaction, record, roleId, settingsStore) {
-  const context = /^\s*([1-9]\d{0,3})\s*\/\s*([1-9]\d?)\s*$/.exec(interaction.fields.getTextInputValue("context"));
-  if (!context || Number(context[2]) > 25) throw new ReportManagementError("Bitte Season / Spieltag angeben, zum Beispiel 4 / 3. Erlaubt sind Season 1–9999 und Spieltag 1–25.");
-  const season = Number(context[1]), matchday = Number(context[2]);
-  let settings;
-  try { settings = settingsStore.get(record.guildId); } catch { /* Historical reports do not require an active season. */ }
-  if (settings?.season === season && matchday > settings.matchdays) {
-    throw new ReportManagementError("Dieser Spieltag gehört nicht zur eingerichteten Season.");
-  }
+async function correctionData(interaction, record, roleId, settingsStore, context) {
+  validateContext(context, settingsStore, record.guildId);
+  const { season, matchday } = context;
   const winner = interaction.fields.getStringSelectValues("winner");
   const loser = interaction.fields.getStringSelectValues("loser");
   if (winner.length !== 1 || loser.length !== 1 || winner[0] === loser[0]) {
@@ -187,20 +229,45 @@ async function correctionData(interaction, record, roleId, settingsStore) {
 }
 
 async function handleManagementComponent(interaction, store, manager, roleId, settingsStore) {
-  const parsed = /^manage:(edit|delete|cancel):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})$/.exec(interaction.customId);
+  const parsed = /^manage:(edit|delete|cancel|season|day|form|number):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})(?::([1-9]\d{0,3}):([1-9]\d?))?$/.exec(interaction.customId);
   if (!parsed || parsed[4] !== interaction.user.id) throw new ReportManagementError("Diese Aktion gehört zu einer anderen Person oder ist ungültig. Bitte erneut am Ergebnispost öffnen.");
-  const [, action, id, revision] = parsed;
+  const [, action, id, revision, , selectedSeason, selectedDay] = parsed;
+  const context = selectedSeason ? { season: Number(selectedSeason), matchday: Number(selectedDay) } : undefined;
   if (action === "cancel") {
-    await interaction.update({ content: "Löschen abgebrochen.", components: [], allowedMentions: { parse: [] } });
+    await interaction.update({ content: "Aktion abgebrochen.", components: [], embeds: [], allowedMentions: { parse: [] } });
     return;
   }
   const record = store.get(id, interaction.guild?.id);
   authorize(interaction, record);
   if (revisionOf(record) !== revision) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte die Aktion erneut öffnen.");
+  if (["season", "day", "form", "number"].includes(action)) {
+    if (record.change) throw new ReportManagementError("Für diesen Report läuft bereits eine Änderung. Bitte die Aktion erneut am Ergebnispost öffnen.");
+    checkChannelAccess(interaction, interaction.channel);
+    validateContext(context, settingsStore, record.guildId);
+    if (action === "form") {
+      await interaction.showModal(correctionModal(interaction, record, roleId, context));
+      return;
+    }
+    if (action === "season" && interaction.values?.length === 1 && interaction.values[0] === "other") {
+      await interaction.showModal(new ModalBuilder().setCustomId(customId("number", record, interaction.user.id, context))
+        .setTitle("Andere Season auswählen").addLabelComponents(new LabelBuilder().setLabel("Season")
+          .setTextInputComponent(new TextInputBuilder().setCustomId("season").setStyle(TextInputStyle.Short)
+            .setRequired(true).setMaxLength(4).setPlaceholder("Season-Nummer von 1 bis 9999"))));
+      return;
+    }
+    const value = action === "number" ? interaction.fields.getTextInputValue("season").trim()
+      : interaction.values?.length === 1 ? interaction.values[0] : "";
+    if (!/^[1-9]\d{0,3}$/.test(value)) throw new ReportManagementError("Bitte eine gültige Season bzw. einen Spieltag auswählen.");
+    const chosen = { ...context, [action === "day" ? "matchday" : "season"]: Number(value) };
+    if (action === "day") validateContext(chosen, settingsStore, record.guildId);
+    const { flags, ...prompt } = contextPrompt(interaction, record, store, settingsStore, chosen);
+    await interaction.update(prompt);
+    return;
+  }
   if (action === "edit") await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
   const channel = await resolveChannel(interaction, record);
-  const change = action === "edit" ? await correctionData(interaction, record, roleId, settingsStore) : { kind: "delete" };
+  const change = action === "edit" ? await correctionData(interaction, record, roleId, settingsStore, context) : { kind: "delete" };
   // Recheck after asynchronous channel/member lookups; the store also verifies the revision.
   authorize(interaction, store.get(id, record.guildId));
   const kind = await manager.apply(id, record.guildId, channel, interaction.client.user.id, change, revision);

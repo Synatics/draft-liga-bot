@@ -80,13 +80,121 @@ function setup(t) {
   };
   const apply = (operation = change()) => manager.apply(record.id, GUILD, channel, BOT, operation, revisionOf(current()));
   const fields = (overrides = {}) => {
-    const values = { context: "4 / 2", winner: JAN, loser: MAX, score: "1-0", link: "https://example.org/corrected", ...overrides };
+    const values = { winner: JAN, loser: MAX, score: "1-0", link: "https://example.org/corrected", ...overrides };
     return { getStringSelectValues: (name) => [values[name]], getTextInputValue: (name) => values[name] };
   };
   return { directory, filePath, store, manager, record, data, message, channel, guild, members, settings,
     edits, deletions, fetches, interaction, current, change, apply, fields,
     removePost() { deleted = true; }, isDeleted: () => deleted };
 }
+
+const rows = (payload) => payload.components.map((row) => row.toJSON().components);
+
+async function openCorrection(f, { season = f.current().season, matchday = f.current().matchday } = {}) {
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  let prompt = command.response;
+  if (season !== f.current().season) {
+    const select = f.interaction({ targetMessage: undefined, message: { embeds: prompt.embeds },
+      customId: rows(prompt)[0][0].custom_id,
+      values: [rows(prompt)[0][0].options.some((option) => option.value === String(season)) ? String(season) : "other"] });
+    await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
+    if (select.modal) {
+      const number = f.interaction({ targetMessage: undefined, message: { embeds: prompt.embeds },
+        customId: select.modal.custom_id, fields: { getTextInputValue: () => String(season) } });
+      await handleManagementComponent(number, f.store, f.manager, ROLE, f.settings);
+      prompt = number.response;
+    } else prompt = select.response;
+  }
+  if (!rows(prompt)[1][0].options.some((option) => option.default && option.value === String(matchday))) {
+    const day = f.interaction({ targetMessage: undefined, message: { embeds: prompt.embeds },
+      customId: rows(prompt)[1][0].custom_id, values: [String(matchday)] });
+    await handleManagementComponent(day, f.store, f.manager, ROLE, f.settings);
+    prompt = day.response;
+  }
+  const button = f.interaction({ targetMessage: undefined, message: { embeds: prompt.embeds }, customId: rows(prompt)[2][0].custom_id });
+  await handleManagementComponent(button, f.store, f.manager, ROLE, f.settings);
+  button.picker = prompt;
+  return button;
+}
+
+test("season choices use this server's history and configuration and retain defaults within Discord's option limit", async (t) => {
+  const f = setup(t);
+  for (let season = 1; season <= 35; season++) {
+    if (season !== 4) f.store.add({ ...f.data, season });
+  }
+  f.store.add({ ...f.data, guildId: "300000000000000002", season: 9999 });
+  f.settings.get = () => ({ season: 40, matchdays: 9 });
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  const options = rows(command.response)[0][0].options;
+  assert.equal(options.length, 25);
+  assert.equal(options.filter((option) => option.default).length, 1);
+  assert.equal(options.find((option) => option.default).value, "4");
+  for (const value of ["4", "35", "40", "other"]) assert.ok(options.some((option) => option.value === value));
+  assert.ok(!options.some((option) => option.value === "9999"));
+});
+
+test("switching to a shorter season clamps the day and preserves the preview without saving a correction", async (t) => {
+  const f = setup(t);
+  f.store.save([{ ...f.current(), season: 3, matchday: 20 }]);
+  const original = f.current();
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  assert.equal(rows(command.response)[1][0].options.length, 25);
+  const select = f.interaction({ targetMessage: undefined, message: { embeds: command.response.embeds },
+    customId: rows(command.response)[0][0].custom_id, values: ["4"] });
+  await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
+  const days = rows(select.response)[1][0].options;
+  assert.equal(days.length, 9);
+  assert.equal(days.find((option) => option.default).value, "9");
+  assert.deepEqual(select.response.embeds, f.message.embeds);
+  assert.deepEqual(f.current(), original);
+  assert.equal(f.edits.length, 0);
+});
+
+test("an unlisted season can be entered separately and canceling discards all selections", async (t) => {
+  const f = setup(t);
+  const original = f.current();
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  const select = f.interaction({ targetMessage: undefined, message: { embeds: command.response.embeds },
+    customId: rows(command.response)[0][0].custom_id, values: ["other"] });
+  await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
+  assert.equal(select.modal.components.length, 1);
+  assert.equal(select.modal.components[0].component.custom_id, "season");
+  for (const value of ["0", "10000", "4 / 3", ""]) {
+    await assert.rejects(handleManagementComponent(f.interaction({ customId: select.modal.custom_id,
+      fields: { getTextInputValue: () => value } }), f.store, f.manager, ROLE, f.settings), /gültige Season/);
+  }
+  const number = f.interaction({ targetMessage: undefined, message: { embeds: command.response.embeds },
+    customId: select.modal.custom_id, fields: { getTextInputValue: () => " 9999 " } });
+  await handleManagementComponent(number, f.store, f.manager, ROLE, f.settings);
+  assert.equal(rows(number.response)[0][0].options.find((option) => option.default).value, "9999");
+  assert.equal(rows(number.response)[1][0].options.length, 25);
+  const cancel = f.interaction({ customId: rows(number.response)[2][1].custom_id });
+  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
+  assert.deepEqual(cancel.response.components, []);
+  assert.deepEqual(cancel.response.embeds, []);
+  assert.deepEqual(f.current(), original);
+  assert.equal(f.edits.length, 0);
+  assert.equal(f.fetches.length, 0);
+});
+
+test("picker actions reject another user or a stale revision and final submission rechecks the configured day limit", async (t) => {
+  const f = setup(t);
+  const command = await openCorrection(f, { matchday: 9 });
+  const customId = rows(command.picker)[0][0].custom_id;
+  await assert.rejects(handleManagementComponent(f.interaction({ customId, values: ["other"], user: { id: OTHER } }),
+    f.store, f.manager, ROLE, f.settings), /anderen Person/);
+  f.settings.get = () => ({ season: 4, matchdays: 8 });
+  await assert.rejects(handleManagementComponent(f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
+    f.store, f.manager, ROLE, f.settings), /Spieltag gehört nicht/);
+  f.store.save([{ ...f.current(), revision: 1 }]);
+  await assert.rejects(handleManagementComponent(f.interaction({ customId, values: ["other"] }),
+    f.store, f.manager, ROLE, f.settings), /inzwischen geändert/);
+  assert.equal(f.edits.length, 0);
+});
 
 test("edits update the existing post, search metadata and persistent duplicate protection together", async (t) => {
   const f = setup(t);
@@ -207,18 +315,20 @@ test("invalid persisted correction journals fail closed when loading the archive
   }
 });
 
-test("context-menu correction opens a real five-field modal with selected players and existing values", async (t) => {
+test("context-menu correction offers season and day dropdowns before a prefilled four-field modal", async (t) => {
   const f = setup(t);
-  const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE);
-  assert.equal(command.modal.components.length, 5);
+  const command = await openCorrection(f);
+  assert.equal(rows(command.picker)[0][0].options.find((option) => option.default).value, "4");
+  assert.equal(rows(command.picker)[1][0].options.find((option) => option.default).value, "1");
+  assert.equal(rows(command.picker)[1][0].options.length, 9);
+  assert.ok(command.picker.flags.includes(MessageFlags.Ephemeral));
+  assert.equal(command.modal.components.length, 4);
   assert.ok(command.modal.custom_id.length <= 100);
   const components = command.modal.components.map((label) => label.component);
-  assert.equal(components[0].value, "4 / 1");
-  assert.equal(components[1].options.find((option) => option.default).value, JAN);
-  assert.equal(components[2].options.find((option) => option.default).value, MAX);
-  assert.equal(components[3].value, "2-0");
-  assert.equal(components[4].value, f.data.link);
+  assert.equal(components[0].options.find((option) => option.default).value, JAN);
+  assert.equal(components[1].options.find((option) => option.default).value, MAX);
+  assert.equal(components[2].value, "2-0");
+  assert.equal(components[3].value, f.data.link);
   assert.equal(f.edits.length, 0);
   assert.equal(managementCommands.filter((entry) => entry.type === 3).length, 2);
   assert.ok(managementCommands.every((entry) => entry.default_member_permissions === undefined));
@@ -229,22 +339,21 @@ test("match participants and server managers can manage a report, but other leag
   for (const id of [JAN, MAX]) {
     const command = f.interaction({ user: { id } });
     await openManagement(command, f.store, f.manager, ROLE);
-    assert.ok(command.modal);
+    assert.ok(command.response.components);
   }
   await assert.rejects(openManagement(f.interaction({ user: { id: OTHER } }), f.store, f.manager, ROLE), /Nur die beiden/);
   const admin = f.interaction({ user: { id: OTHER }, memberPermissions: permissions(P.ManageGuild) });
   await openManagement(admin, f.store, f.manager, ROLE);
-  assert.ok(admin.modal);
+  assert.ok(admin.response.components);
   f.message.author.id = OTHER;
   await assert.rejects(openManagement(f.interaction(), f.store, f.manager, ROLE), /Ergebnispost dieses Bots/);
 });
 
 test("correction submission updates season, players, score and replay while keeping spoilers and mentions safe", async (t) => {
   const f = setup(t);
-  const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE);
+  const command = await openCorrection(f, { season: 5, matchday: 3 });
   const submit = f.interaction({ customId: command.modal.custom_id,
-    fields: f.fields({ context: "5 / 3", winner: OTHER, score: "1-0 || @everyone" }) });
+    fields: f.fields({ winner: OTHER, score: "1-0 || @everyone" }) });
   await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
   assert.ok(submit.defer.flags.includes(MessageFlags.Ephemeral));
   assert.match(submit.response.content, /korrigiert/);
@@ -259,13 +368,11 @@ test("correction submission updates season, players, score and replay while keep
 test("historical participants remain selectable without the role; newly selected people must still have it", async (t) => {
   const f = setup(t);
   f.members.delete(MAX);
-  const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE);
-  assert.equal(command.modal.components[2].component.options.find((option) => option.default).value, MAX);
+  const command = await openCorrection(f);
+  assert.equal(command.modal.components[1].component.options.find((option) => option.default).value, MAX);
   const submit = f.interaction({ customId: command.modal.custom_id, fields: f.fields() });
   await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
-  const fresh = f.interaction();
-  await openManagement(fresh, f.store, f.manager, ROLE);
+  const fresh = await openCorrection(f);
   f.members.get(OTHER).roles.cache.clear();
   await assert.rejects(handleManagementComponent(f.interaction({ customId: fresh.modal.custom_id,
     fields: f.fields({ winner: OTHER }) }), f.store, f.manager, ROLE, f.settings), /Teilnehmerrolle/);
@@ -277,15 +384,19 @@ test("duplicate display names require explicit player selection instead of guess
   const command = f.interaction({ targetMessage: { ...f.message,
     embeds: createResultMessage("Max", "Max", "2-0", f.data.link, f.data).embeds.map((embed) => embed.toJSON()) } });
   const modal = correctionModal(command, record, ROLE).toJSON();
+  assert.equal(modal.components[0].component.options.some((option) => option.default), false);
   assert.equal(modal.components[1].component.options.some((option) => option.default), false);
-  assert.equal(modal.components[2].component.options.some((option) => option.default), false);
 });
 
 test("invalid, foreign, stale or no-longer-authorized forms cannot change any data", async (t) => {
   const f = setup(t);
-  const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE);
-  for (const values of [{ context: "0/2" }, { context: "4/10" }, { winner: JAN, loser: JAN },
+  const command = await openCorrection(f);
+  for (const context of [":0:2", ":4:10", ":4:26"]) {
+    await assert.rejects(handleManagementComponent(f.interaction({
+      customId: command.modal.custom_id.replace(/:\d+:\d+$/, context), fields: f.fields(),
+    }), f.store, f.manager, ROLE, f.settings));
+  }
+  for (const values of [{ winner: JAN, loser: JAN },
     { score: " " }, { link: "javascript:alert(1)" }]) {
     await assert.rejects(handleManagementComponent(f.interaction({ customId: command.modal.custom_id, fields: f.fields(values) }),
       f.store, f.manager, ROLE, f.settings));
@@ -337,8 +448,7 @@ test("the slash fallback removes a missing post's archive record using its origi
 test("a fresh private-thread membership check rejects removed members even if the cache is stale", async (t) => {
   const f = setup(t);
   f.channel.type = ChannelType.PrivateThread;
-  const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE);
+  const command = await openCorrection(f);
   f.channel.members.fetch = async () => { throw new Error("not a member"); };
   await assert.rejects(handleManagementComponent(f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
     f.store, f.manager, ROLE, f.settings), /privaten Thread/);
@@ -368,7 +478,7 @@ test("prefilling a correction reverses escaped score text without changing its b
   const command = f.interaction({ targetMessage: { ...f.message,
     embeds: createResultMessage("Jan", "Max", score, f.data.link, f.data).embeds.map((embed) => embed.toJSON()) } });
   const modal = correctionModal(command, f.current(), ROLE).toJSON();
-  assert.equal(modal.components[3].component.value, score);
+  assert.equal(modal.components[2].component.value, score);
 });
 
 test("opening correction cannot accidentally execute a previously pending deletion", async (t) => {

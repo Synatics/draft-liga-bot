@@ -206,9 +206,12 @@ Wurde dasselbe Match bereits veröffentlicht, erhält die meldende Person stattd
 
 ### Reports korrigieren und entfernen
 
-**Korrigieren:** Den Ergebnispost rechtsklicken bzw. auf Mobilgeräten gedrückt halten, unter **Apps** die Aktion **Report korrigieren** auswählen und das vorausgefüllte Formular anpassen. Die Bezeichnung bzw. Platzierung des Nachrichtenmenüs kann je nach Discord-Client abweichen.
+**Korrigieren:** Den Ergebnispost rechtsklicken bzw. auf Mobilgeräten gedrückt halten und unter **Apps** die Aktion **Report korrigieren** auswählen. Die Bezeichnung bzw. Platzierung des Nachrichtenmenüs kann je nach Discord-Client abweichen. Die Bearbeitung erfolgt in zwei Schritten:
 
-Das Formular enthält `Season / Spieltag` im Format `4 / 3`, die Dropdowns für Gewinner und Verlierer, den Score und den Replay-Link. Season und Spieltag lassen sich damit auch nachträglich korrigieren, ohne die globale Liga-Konfiguration zu ändern. Erlaubt sind Season 1–9999 und Spieltag 1–25; in der aktuell eingerichteten Season gilt zusätzlich deren konfigurierte Spieltaganzahl.
+1. Eine nur für die bearbeitende Person sichtbare Nachricht zeigt den bisherigen Post sowie getrennte **Dropdowns für Season und Spieltag**. Die bisherigen Werte sind vorausgewählt. Die Season-Liste entsteht aus dem Archiv dieses Servers und der aktuellen Liga-Einstellung. Sie zeigt bis zu 24 Seasons; über **Andere Season …** lässt sich jede Season-Nummer von 1–9999 eingeben. Eine neue Season erfordert keine Codeänderung. Für die aktuell eingerichtete Season stehen nur deren konfigurierte Spieltage zur Auswahl, für andere Seasons die Spieltage 1–25. Beim Wechsel in eine kürzere Season wird ein zu hoher Spieltag auf deren letzten Spieltag gesetzt.
+2. **Weiter: Ergebnis bearbeiten** öffnet das vorausgefüllte Formular mit den Dropdowns für Gewinner und Verlierer, dem Score und dem Replay-Link. Season und Spieltag stehen zur Kontrolle im Formulartitel.
+
+Erst das Absenden dieses Formulars speichert die Korrektur. Die Auswahl der Dropdowns und **Abbrechen** verändern weder den Ergebnispost noch das Archiv. Die globale Liga-Konfiguration bleibt bei einer Report-Korrektur unverändert. Beim Absenden werden die gewählten Werte und die aktuelle Spieltaggrenze erneut geprüft.
 
 Die bisherigen Teilnehmer bleiben für historische Korrekturen auswählbar, auch ohne aktuelle Teilnehmerrolle oder Servermitgliedschaft. Zusätzliche Personen stammen aus der Teilnehmerrolle und werden beim Absenden erneut geprüft. Gespeicherte Namen bleiben für bereits beteiligte Personen erhalten. Bei identischen gespeicherten Namen muss die Zuordnung von Gewinner und Verlierer erneut ausgewählt werden; der Bot rät nicht. Das Formular unterstützt insgesamt höchstens 25 Teilnehmer.
 
