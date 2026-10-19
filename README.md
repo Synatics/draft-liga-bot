@@ -180,7 +180,7 @@ Alle Befehle werden **in einem Serverkanal** ausgeführt. `/suchen` liefert sein
 | `/suchen` | Gespeicherte Replays eines Spielers per DM abrufen | Anwendungsbefehle verwenden dürfen; lesbare Ergebnis-Kanäle und zustellbare DMs |
 | Nachrichtenaktion „Report korrigieren“ | Vorhandenen Ergebnispost und Suchtreffer korrigieren | Einer der beiden gespeicherten Match-Teilnehmer oder Server verwalten; Zugriff auf den Ergebniskanal |
 | Nachrichtenaktion „Report löschen“ | Ergebnispost und Archiv-Eintrag nach Bestätigung löschen | Dieselben Anforderungen wie bei Korrekturen |
-| `/report-entfernen nachricht:…` | Einen Report über den ursprünglichen Discord-Nachrichtenlink entfernen | Dieselben Anforderungen; funktioniert auch bei bereits gelöschtem Post |
+| `/report-entfernen season:… name:… spieltag:…` | Gespeicherten Report finden und nach Bestätigung entfernen; Spieltag optional | Dieselben Anforderungen; funktioniert auch bei bereits gelöschtem Post |
 
 Der Aufruf von `/report` oder `/suchen` ist im Code nicht auf Personen mit Teilnehmerrolle beschränkt. Die Rolle bestimmt, welche Personen als Spieler für ein neues Match ausgewählt werden können. Zusätzliche Einschränkungen lassen sich über Discord-Kanal- und Integrationsrechte konfigurieren.
 
@@ -219,13 +219,18 @@ Nach dem Absenden wird **derselbe Post** bearbeitet. Sein Nachrichtenlink bleibt
 
 **Löschen:** Am Ergebnispost unter **Apps → Report löschen** die private Rückfrage mit **Ja, Report löschen** bestätigen oder mit **Abbrechen** schließen. Erst die Bestätigung entfernt den öffentlichen Post und seinen Archiv-Eintrag. Das Match erscheint danach nicht mehr in neuen Suchen und kann bei Bedarf neu gemeldet werden.
 
-Wurde der Discord-Post bereits manuell gelöscht und ist sein ursprünglicher Nachrichtenlink noch bekannt, funktioniert dieselbe Archiv-Bereinigung über:
+**Ohne vorhandenen Discord-Post:** `/report-entfernen` durchsucht das Archiv nach Season und Spieler. Ein Nachrichtenlink ist dafür nicht nötig. Mit dem optionalen Spieltag lässt sich die Auswahl eingrenzen:
 
 ```text
-/report-entfernen nachricht:https://discord.com/channels/SERVER_ID/KANAL_ID/NACHRICHTEN_ID
+/report-entfernen season:4 name:Jan
+/report-entfernen season:4 name:Jan spieltag:3
 ```
 
-Auch dieser Befehl zeigt zuerst eine private Bestätigung. Er nimmt den **Discord-Nachrichtenlink**, nicht den Replay-Link. Die Aktion funktioniert nur für gespeicherte Reports mit bekannter Nachrichten-ID. Ältere Archiveinträge ohne diese Verknüpfung und Meldungen mit unklarem ursprünglichem Versandstatus werden nicht automatisch zugeordnet.
+Die Namensvorschläge stammen aus den gespeicherten Reports dieser Season. Frühere Namen und Teilnehmer ohne aktuelle Rolle bleiben auffindbar; bei identischen Namen muss ein eindeutiger Vorschlag ausgewählt werden. Ergebnisse und Vorschläge berücksichtigen nur Reports, die die aufrufende Person verwalten darf und deren Ergebniskanal sie lesen kann. Die Mitgliedschaft in privaten Threads wird erneut geprüft.
+
+Bei genau einem Treffer erscheint direkt die private Bestätigung. Bei mehreren Treffern zeigt ein Dropdown Spieltag, beide Teilnehmer und den Replay-Link; Listen mit mehr als 25 Treffern haben Seiten. Nach der Auswahl zeigt die Bestätigung nochmals Season, Spieltag, Teilnehmer, Replay-Link und Kanal. Erst **Ja, Report löschen** entfernt genau diesen Report. Existiert der öffentliche Post noch, wird er ebenfalls gelöscht; andernfalls wird nur das Archiv bereinigt. Eine inzwischen geänderte Auswahl muss erneut geöffnet werden.
+
+Die Aktion funktioniert für bestätigte Veröffentlichungen mit intern gespeicherter Nachrichten-ID, die der Bot selbst verwendet. Die aufrufende Person muss diese ID weder kennen noch eingeben. Ältere Archiveinträge ohne diese Verknüpfung und Meldungen mit unklarem ursprünglichem Versandstatus werden nicht automatisch zugeordnet. Die Suche setzt keine aktuell eingerichtete Season voraus und verändert vor der Bestätigung keine Daten.
 
 **Zugriff:** Berechtigt sind die im Archiv gespeicherten beiden Match-Teilnehmer sowie Personen mit `ManageGuild` / Server verwalten. Eine zusätzliche Rolle ist nicht erforderlich. Die Berechtigung wird beim Öffnen und beim Absenden bzw. Bestätigen erneut geprüft. Zusätzlich muss die Person den Ergebniskanal und Nachrichtenverlauf lesen dürfen; bei privaten Threads prüft der Bot vor der Änderung die aktuelle Mitgliedschaft oder `ManageThreads`. Der Bot bearbeitet und löscht nur eigene Posts und benötigt dafür kein Recht zum Verwalten fremder Nachrichten.
 
@@ -365,7 +370,7 @@ Anschließend `publication` wie oben beschrieben auf `pending` bzw. `published` 
 
 - Das Archiv enthält nur Reports, die der Bot über `/report` gespeichert hat. Es gibt keinen Import alter Discord-Nachrichten.
 - Neue Seasons löschen keine früheren Matches. Auch die Suche nach abgeschlossenen Seasons bleibt verfügbar.
-- Nur die Bot-Aktionen zum Korrigieren und Löschen halten Discord-Post und Archiv gemeinsam aktuell. Manuelles Löschen in Discord entfernt den Archiv-Eintrag nicht; bei bekanntem Nachrichtenlink kann `/report-entfernen` ihn bereinigen.
+- Nur die Bot-Aktionen zum Korrigieren und Löschen halten Discord-Post und Archiv gemeinsam aktuell. Manuelles Löschen in Discord entfernt den Archiv-Eintrag nicht; `/report-entfernen` kann ihn über Season und Spieler finden und bereinigen.
 - Für jede Installation sind höchstens 25 Teilnehmer und 25 Spieltage pro Season vorgesehen.
 - Eine Bot-Instanz muss dauerhaft laufen, damit die Befehle beantwortet werden. Der Code stellt keinen HTTP-Endpunkt für eine Webseite oder einen Healthcheck bereit.
 - **Nur eine laufende Instanz pro gemeinsamem Datenverzeichnis betreiben.** Es gibt keine Dateisperren oder Synchronisation zwischen mehreren Prozessen.
@@ -505,5 +510,5 @@ Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, 
 | Report meldet einen unklaren Versandstatus | Kanal und Archiv wie unter „Unklaren Versandstatus manuell prüfen“ kontrollieren; ein Neustart hebt die Sperre absichtlich nicht auf |
 | Alter Report wird nicht erneut gepostet | Bestands-Einträge haben keinen Veröffentlichungsstatus und werden vorsichtshalber nicht erneut gesendet |
 | Trotzdem doppelte Ergebnisposts | Prüfen, ob eine ältere Bot-Version läuft, Angaben wie Kanal oder Spieltag abweichen oder mehrere Prozesse mit demselben Token bzw. Datenverzeichnis laufen |
-| Korrektur oder Löschung meldet einen unterbrochenen Versuch | Kanalrechte und Datenspeicher prüfen; die betreffende Aktion erneut am Ergebnispost öffnen bzw. bei fehlendem Post `/report-entfernen` mit dessen ursprünglichem Nachrichtenlink verwenden |
+| Korrektur oder Löschung meldet einen unterbrochenen Versuch | Kanalrechte und Datenspeicher prüfen; die betreffende Aktion erneut am Ergebnispost öffnen bzw. bei fehlendem Post `/report-entfernen` mit Season, Spieler und optional Spieltag verwenden |
 | Nachrichtenaktion kann den Report nicht zuordnen | Es muss ein eigener Ergebnispost mit gespeicherter Nachrichten-ID sein; Bestands-Einträge ohne diese Verknüpfung weiterhin manuell prüfen |

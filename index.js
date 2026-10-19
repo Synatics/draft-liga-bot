@@ -20,7 +20,7 @@ const { leagueCommand, handleLeagueCommand } = require("./league-commands");
 const { MatchStoreError, normalizeReplayLink } = require("./match-store");
 const { ReportPublisher } = require("./report-publisher");
 const { ReportManager, ReportManagementError } = require("./report-manager");
-const { managementCommands, openManagement, handleManagementComponent } = require("./report-management");
+const { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete } = require("./report-management");
 const { DataBackups, startAutomaticBackups } = require("./data-backups");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 const { prepareStartup, connectDiscord, failStartup } = require("./startup");
@@ -82,6 +82,7 @@ async function startBot() {
     const isLeagueCommand = interaction.isChatInputCommand() && interaction.commandName === "liga";
     const isSearchCommand = interaction.isChatInputCommand() && interaction.commandName === "suchen";
     const isSearchAutocomplete = interaction.isAutocomplete() && interaction.commandName === "suchen";
+    const isRemovalAutocomplete = interaction.isAutocomplete() && interaction.commandName === "report-entfernen";
     const isManagementCommand = (interaction.isMessageContextMenuCommand?.() &&
       ["Report korrigieren", "Report löschen"].includes(interaction.commandName)) ||
       (interaction.isChatInputCommand() && interaction.commandName === "report-entfernen");
@@ -90,10 +91,14 @@ async function startBot() {
     const isReportSubmit = interaction.isModalSubmit() && (
       interaction.customId === "submit_report" || interaction.customId.startsWith("submit_report:")
     );
-    if (!isReportCommand && !isReportSubmit && !isLeagueCommand && !isSearchCommand && !isSearchAutocomplete &&
+    if (!isReportCommand && !isReportSubmit && !isLeagueCommand && !isSearchCommand && !isSearchAutocomplete && !isRemovalAutocomplete &&
         !isManagementCommand && !isManagementComponent) return;
 
     try {
+      if (isRemovalAutocomplete) {
+        await handleRemovalAutocomplete(interaction, matchStore);
+        return;
+      }
       if (isManagementCommand) {
         await openManagement(interaction, matchStore, reportManager, participantRoleId, settingsStore);
         return;
@@ -170,7 +175,7 @@ async function startBot() {
         allowedMentions: { parse: [] },
       });
     } catch (error) {
-      if (isSearchAutocomplete) {
+      if (isSearchAutocomplete || isRemovalAutocomplete) {
         console.error("Fehler bei den Suchvorschlägen:", error);
         if (!interaction.responded) {
           try { await interaction.respond([]); } catch { /* The autocomplete interaction may have expired. */ }

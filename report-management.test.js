@@ -9,7 +9,7 @@ const { ReportManager } = require("./report-manager");
 const { ReportPublisher } = require("./report-publisher");
 const { createResultMessage } = require("./reports");
 const { resultMessages } = require("./search-commands");
-const { managementCommands, openManagement, handleManagementComponent, correctionModal, messageReference } = require("./report-management");
+const { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete, correctionModal } = require("./report-management");
 
 const GUILD = "300000000000000001", CHANNEL = "400000000000000001", MESSAGE = "500000000000000001";
 const JAN = "200000000000000001", MAX = "200000000000000002", OTHER = "200000000000000003";
@@ -89,6 +89,17 @@ function setup(t) {
 }
 
 const rows = (payload) => payload.components.map((row) => row.toJSON().components);
+const removalOptions = ({ season = 4, name = JAN, matchday = null } = {}) => ({
+  getInteger: (key) => key === "season" ? season : matchday,
+  getString: () => name,
+  getFocused: () => ({ name: "name", value: name }),
+});
+const addPublished = (f, overrides = {}, messageId = String(BigInt(MESSAGE) + BigInt(f.store.list(GUILD).length))) => {
+  const record = f.store.add({ ...f.data, ...overrides });
+  f.store.setPublication(record.id, { status: "sending" });
+  f.store.setPublication(record.id, { status: "published", messageId });
+  return f.store.get(record.id, record.guildId);
+};
 
 async function openCorrection(f, { season = f.current().season, matchday = f.current().matchday } = {}) {
   const command = f.interaction();
@@ -430,19 +441,133 @@ test("deletion requires a private confirmation; canceling leaves the post and se
   assert.equal(f.store.list(GUILD).length, 0);
 });
 
-test("the slash fallback removes a missing post's archive record using its original message link", async (t) => {
+test("the slash fallback finds a deleted post by season and player and removes it only after confirmation", async (t) => {
   const f = setup(t);
   f.removePost();
   const command = f.interaction({ commandName: "report-entfernen",
-    options: { getString: () => `https://discord.com/channels/${GUILD}/${CHANNEL}/${MESSAGE}` } });
+    options: removalOptions({ name: "jan", matchday: 1 }) });
   await openManagement(command, f.store, f.manager, ROLE);
+  assert.ok(command.defer.flags.includes(MessageFlags.Ephemeral));
+  assert.match(command.response.content, /Season 4 · Spieltag 1 · Jan vs\. Max/);
+  assert.ok(command.response.content.includes(f.data.link));
+  assert.equal(f.store.list(GUILD).length, 1);
+  assert.equal(f.fetches.length, 0, "Searching does not need the original message");
   const confirm = f.interaction({ customId: command.response.components[0].toJSON().components[0].custom_id });
   await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
   assert.equal(f.store.list(GUILD).length, 0);
   assert.equal(f.deletions.length, 0);
-  for (const url of ["https://evil.example/channels/1/2/3", "javascript:alert(1)", "https://discord.com/channels/@me/123"]) {
-    assert.throws(() => messageReference(url), /Nachrichtenlink/);
+  const slash = managementCommands.find((entry) => entry.name === "report-entfernen");
+  assert.deepEqual(slash.options.map((option) => option.name), ["season", "name", "spieltag"]);
+  assert.equal(slash.options[1].autocomplete, true);
+});
+
+test("multiple removal matches require selecting exactly one report and confirming it", async (t) => {
+  const f = setup(t);
+  const second = addPublished(f, { matchday: 2, link: "https://example.org/second" });
+  addPublished(f, { season: 5 }, "500000000000000003");
+  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  await openManagement(command, f.store, f.manager, ROLE);
+  const options = rows(command.response)[0][0].options;
+  assert.equal(options.length, 2);
+  assert.match(options[1].label, /Spieltag 2 · Jan vs\. Max/);
+  assert.equal(options[1].description, second.link);
+  assert.equal(f.deletions.length, 0);
+  const select = f.interaction({ customId: rows(command.response)[0][0].custom_id, values: [options[0].value] });
+  await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
+  assert.match(select.response.content, /wirklich löschen/);
+  assert.equal(f.deletions.length, 0);
+  const confirm = f.interaction({ customId: rows(select.response)[0][0].custom_id });
+  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
+  assert.equal(f.deletions.length, 1);
+  assert.equal(f.store.list(GUILD).length, 2);
+  const specific = f.interaction({ commandName: "report-entfernen", options: removalOptions({ matchday: 2 }) });
+  await openManagement(specific, f.store, f.manager, ROLE);
+  assert.ok(specific.response.content.includes(second.link));
+  assert.match(specific.response.content, /wirklich löschen/);
+});
+
+test("removal pages include every match and canceling never deletes anything", async (t) => {
+  const f = setup(t);
+  for (let index = 1; index < 27; index++) addPublished(f, { link: `https://example.org/${index}` }, String(BigInt(MESSAGE) + BigInt(index)));
+  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  await openManagement(command, f.store, f.manager, ROLE);
+  assert.match(command.response.content, /27 Treffer · Seite 1 von 2/);
+  const firstPage = rows(command.response)[0][0].options;
+  assert.equal(firstPage.length, 25);
+  const next = f.interaction({ customId: rows(command.response)[1][1].custom_id });
+  await handleManagementComponent(next, f.store, f.manager, ROLE, f.settings);
+  assert.match(next.response.content, /Seite 2 von 2/);
+  const secondPage = rows(next.response)[0][0].options;
+  assert.equal(secondPage.length, 2);
+  assert.equal(new Set([...firstPage, ...secondPage].map((option) => option.value)).size, 27);
+  const cancel = f.interaction({ customId: rows(next.response)[1][2].custom_id });
+  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
+  assert.deepEqual(cancel.response.components, []);
+  assert.equal(f.deletions.length, 0);
+  assert.equal(f.store.list(GUILD).length, 27);
+});
+
+test("removal suggestions and results exclude other people's reports, other servers and inaccessible private threads", async (t) => {
+  const f = setup(t);
+  const hiddenChannel = "400000000000000002";
+  addPublished(f, { players: [{ id: OTHER, name: "Lennart" }, { id: MAX, name: "Max" }] });
+  addPublished(f, { guildId: "300000000000000002", players: [{ id: JAN, name: "Fremder Server" }, { id: MAX, name: "Max" }] });
+  addPublished(f, { channelId: hiddenChannel, players: [{ id: JAN, name: "Versteckt" }, { id: MAX, name: "Max" }] });
+  f.store.add({ ...f.data, link: "https://example.org/pending", players: [{ id: JAN, name: "Noch nicht veröffentlicht" }, { id: MAX, name: "Max" }] });
+  const fetchChannel = f.guild.channels.fetch;
+  f.guild.channels.fetch = async (id) => id === hiddenChannel ? {
+    ...f.channel, id: hiddenChannel, type: ChannelType.PrivateThread,
+    members: { cache: new Collection([[JAN, {}]]), async fetch() { throw new Error("no longer a member"); } },
+  } : fetchChannel(id);
+  const autocomplete = f.interaction({ options: removalOptions({ name: "" }), async respond(choices) { this.choices = choices; } });
+  await handleRemovalAutocomplete(autocomplete, f.store);
+  assert.deepEqual(autocomplete.choices.map((choice) => choice.name), ["Jan", "Max"]);
+  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: OTHER }) });
+  await openManagement(command, f.store, f.manager, ROLE);
+  assert.match(command.response.content, /Keine passenden Reports/);
+  const admin = f.interaction({ commandName: "report-entfernen", memberPermissions: permissions(P.ManageGuild),
+    options: removalOptions({ name: OTHER }) });
+  await openManagement(admin, f.store, f.manager, ROLE);
+  assert.match(admin.response.content, /Lennart/);
+  assert.equal(f.deletions.length, 0);
+});
+
+test("removal choices reject stale records, foreign users, revoked access and invalid filters", async (t) => {
+  const f = setup(t);
+  addPublished(f, { matchday: 2 });
+  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  await openManagement(command, f.store, f.manager, ROLE);
+  const customId = rows(command.response)[0][0].custom_id;
+  const values = [rows(command.response)[0][0].options[0].value];
+  await assert.rejects(handleManagementComponent(f.interaction({ customId, values, user: { id: OTHER } }),
+    f.store, f.manager, ROLE, f.settings), /anderen Person/);
+  f.channel.permissionsFor = () => new PermissionsBitField([]);
+  await assert.rejects(handleManagementComponent(f.interaction({ customId, values }),
+    f.store, f.manager, ROLE, f.settings), /keinen Zugriff/);
+  f.channel.permissionsFor = () => permissions();
+  f.store.save(f.store.list(GUILD).map((match) => ({ ...match, revision: 1 })));
+  await assert.rejects(handleManagementComponent(f.interaction({ customId, values }),
+    f.store, f.manager, ROLE, f.settings), /inzwischen geändert/);
+  for (const filters of [{ season: 0 }, { season: 10000 }, { matchday: 26 }]) {
+    await assert.rejects(openManagement(f.interaction({ commandName: "report-entfernen", options: removalOptions(filters) }),
+      f.store, f.manager, ROLE), /Season von/);
   }
+  assert.equal(f.deletions.length, 0);
+});
+
+test("removal suggestions retain historical names and require explicit selection for duplicate names", async (t) => {
+  const f = setup(t);
+  addPublished(f, { matchday: 2, players: [{ id: JAN, name: "Roran321" }, { id: MAX, name: "Max" }] });
+  f.members.clear();
+  const autocomplete = f.interaction({ options: removalOptions({ name: "ja" }), async respond(choices) { this.choices = choices; } });
+  await handleRemovalAutocomplete(autocomplete, f.store);
+  assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);
+  f.store.save(f.store.list(GUILD).map((match) => ({ ...match, players: match.players.map((player) => ({ ...player, name: "Max" })) })));
+  await assert.rejects(openManagement(f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: "Max" }) }),
+    f.store, f.manager, ROLE), /Mehrere Teilnehmer/);
+  const selected = f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: MAX }) });
+  await openManagement(selected, f.store, f.manager, ROLE);
+  assert.equal(rows(selected.response)[0][0].options.length, 2);
 });
 
 test("a fresh private-thread membership check rejects removed members even if the cache is stale", async (t) => {

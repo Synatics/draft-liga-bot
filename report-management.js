@@ -6,13 +6,19 @@ const {
 const { matchData, normalizeReplayLink, revisionOf } = require("./match-store");
 const { createResultMessage } = require("./reports");
 const { ReportManagementError } = require("./report-manager");
+const { playerChoices, resolvePlayer } = require("./search-commands");
 
 const managementCommands = [
   { name: "Report korrigieren", type: ApplicationCommandType.Message, contexts: [0] },
   { name: "Report löschen", type: ApplicationCommandType.Message, contexts: [0] },
-  { name: "report-entfernen", description: "Einen Report über seinen Nachrichtenlink entfernen, auch wenn der Post schon gelöscht ist",
-    contexts: [0], options: [{ name: "nachricht", description: "Link zum ursprünglichen Discord-Ergebnispost", type: 3,
-      required: true, max_length: 200 }] },
+  { name: "report-entfernen", description: "Gespeicherten Report finden und löschen, auch wenn der Post schon fehlt",
+    contexts: [0], options: [
+      { name: "season", description: "Welche Season?", type: 4, required: true, min_value: 1, max_value: 9999 },
+      { name: "name", description: "Spielernamen eingeben und einen Vorschlag auswählen", type: 3,
+        required: true, autocomplete: true, min_length: 1, max_length: 100 },
+      { name: "spieltag", description: "Optional: nur Reports von diesem Spieltag", type: 4,
+        min_value: 1, max_value: 25 },
+    ] },
 ];
 const privateReply = { flags: [MessageFlags.Ephemeral], allowedMentions: { parse: [] } };
 const customId = (action, record, userId, context) => `manage:${action}:${record.id}:${revisionOf(record)}:${userId}` +
@@ -67,10 +73,13 @@ function contextPrompt(interaction, record, store, settingsStore, requested = re
   };
 }
 
+function canManage(interaction, record) {
+  return interaction.guild?.id === record.guildId && (record.players.some((player) => player.id === interaction.user.id) ||
+    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
 function authorize(interaction, record) {
-  if (!interaction.guild || record.guildId !== interaction.guild.id ||
-      (!record.players.some((player) => player.id === interaction.user.id) &&
-       !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild))) {
+  if (!canManage(interaction, record)) {
     throw new ReportManagementError("Nur die beiden Match-Teilnehmer oder Personen mit „Server verwalten“ dürfen diesen Report ändern oder löschen.");
   }
 }
@@ -149,7 +158,7 @@ function correctionModal(interaction, record, roleId, context = record) {
 function deletionPrompt(interaction, record) {
   const names = record.players.map((player) => escapeMarkdown(player.name.replace(/[\r\n]/g, " "))).join(" vs. ");
   return {
-    ...privateReply, content: `Report **Season ${record.season} · Spieltag ${record.matchday} · ${names}** wirklich löschen? Der Ergebnispost und sein Suchtreffer werden entfernt.`,
+    ...privateReply, content: `Report **Season ${record.season} · Spieltag ${record.matchday} · ${names}** wirklich löschen?\nReplay: <${record.link}>\nKanal: <#${record.channelId}>\n\nDer Ergebnispost und sein Suchtreffer werden entfernt. Fehlt der Post bereits, wird nur der Archiv-Eintrag entfernt.`,
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(customId("delete", record, interaction.user.id)).setLabel("Ja, Report löschen").setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId(customId("cancel", record, interaction.user.id)).setLabel("Abbrechen").setStyle(ButtonStyle.Secondary)
@@ -157,26 +166,106 @@ function deletionPrompt(interaction, record) {
   };
 }
 
-function messageReference(value) {
-  try {
-    const url = new URL(value);
-    const match = /^\/channels\/(\d{17,20})\/(\d{17,20})\/(\d{17,20})\/?$/.exec(url.pathname);
-    if (url.protocol !== "https:" || !/^(?:(?:canary|ptb)\.)?(?:discord\.com|discordapp\.com)$/.test(url.hostname) || !match) throw new Error();
-    return { guildId: match[1], channelId: match[2], messageId: match[3] };
-  } catch { throw new ReportManagementError("Bitte einen Discord-Nachrichtenlink zum ursprünglichen Ergebnispost angeben."); }
+async function removableMatches(interaction, store) {
+  if (!interaction.guild) return [];
+  const matches = store.list(interaction.guild.id).filter((match) =>
+    match.publication?.status === "published" && canManage(interaction, match));
+  // Verify each result channel once, including current private-thread membership.
+  const access = new Map(await Promise.all([...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
+    try {
+      await resolveChannel(interaction, { guildId: interaction.guild.id, channelId });
+      return [channelId, true];
+    } catch (error) {
+      if (!(error instanceof ReportManagementError)) throw error;
+      return [channelId, false];
+    }
+  })));
+  return matches.filter((match) => access.get(match.channelId));
+}
+
+async function handleRemovalAutocomplete(interaction, store) {
+  const season = interaction.options.getInteger("season");
+  const focused = interaction.options.getFocused(true);
+  await interaction.respond(focused.name === "name" && season
+    ? playerChoices(await removableMatches(interaction, store), season, String(focused.value)) : []);
+}
+
+const matchingRemovals = (matches, query) => matches.filter((match) => match.season === query.season &&
+  (!query.matchday || match.matchday === query.matchday) && match.players.some((player) => player.id === query.playerId))
+  .sort((a, b) => a.matchday - b.matchday || a.channelId.localeCompare(b.channelId) || a.id.localeCompare(b.id));
+
+function removalPicker(interaction, matches, query, requestedPage = 0) {
+  if (!matches.length) return { content: "Keine passenden Reports gefunden, die du entfernen darfst. Prüfe Season, Spieler, Spieltag und deinen Zugriff auf den Ergebniskanal.",
+    components: [], allowedMentions: { parse: [] } };
+  const pages = Math.ceil(matches.length / 25);
+  const page = Math.min(requestedPage, pages - 1);
+  const pageId = (number) => `manage:page:${interaction.user.id}:${query.season}:${query.playerId}:${query.matchday || 0}:${number}`;
+  return {
+    content: `**Report entfernen · Season ${query.season}**\n${matches.length} Treffer · Seite ${page + 1} von ${pages}. Bitte genau einen Report auswählen. Gelöscht wird erst nach deiner Bestätigung.`,
+    allowedMentions: { parse: [] },
+    components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+      .setCustomId(`manage:pick:${interaction.user.id}`).setPlaceholder("Report auswählen").setMinValues(1).setMaxValues(1)
+      .addOptions(matches.slice(page * 25, (page + 1) * 25).map((match) => ({
+        label: `Spieltag ${match.matchday} · ${match.players.map((player) => player.name.replace(/[\r\n]/g, " ")).join(" vs. ")}`.slice(0, 100),
+        description: match.link.slice(0, 100), value: `${match.id}:${revisionOf(match)}`,
+      })))),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(pageId(Math.max(0, page - 1))).setLabel("Zurück").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+      new ButtonBuilder().setCustomId(pageId(page + 1)).setLabel("Weiter").setStyle(ButtonStyle.Secondary).setDisabled(page + 1 === pages),
+      new ButtonBuilder().setCustomId(`manage:stop:${interaction.user.id}`).setLabel("Abbrechen").setStyle(ButtonStyle.Secondary)
+    )],
+  };
+}
+
+async function openRemoval(interaction, store) {
+  await interaction.deferReply(privateReply);
+  const season = interaction.options.getInteger("season", true);
+  const matchday = interaction.options.getInteger("spieltag");
+  if (!Number.isInteger(season) || season < 1 || season > 9999 ||
+      (matchday != null && (!Number.isInteger(matchday) || matchday < 1 || matchday > 25))) {
+    throw new ReportManagementError("Bitte eine Season von 1–9999 und optional einen Spieltag von 1–25 auswählen.");
+  }
+  const matches = await removableMatches(interaction, store);
+  const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
+  const query = { season, matchday, playerId: player?.id };
+  const found = matchingRemovals(matches, query);
+  const { flags, ...prompt } = found.length === 1 ? deletionPrompt(interaction, found[0]) : removalPicker(interaction, found, query);
+  await interaction.editReply(prompt);
+}
+
+async function handleRemovalComponent(interaction, store) {
+  const parsed = /^manage:(pick|page|stop):(\d{17,20})(?::([1-9]\d{0,3}):(\d{17,20}):(\d{1,2}):(\d{1,6}))?$/.exec(interaction.customId);
+  if (!parsed || parsed[2] !== interaction.user.id || !interaction.guild) {
+    throw new ReportManagementError("Diese Auswahl gehört zu einer anderen Person oder ist ungültig. Bitte /report-entfernen erneut verwenden.");
+  }
+  const [, action, , season, playerId, matchday, page] = parsed;
+  if (action === "stop") {
+    await interaction.update({ content: "Aktion abgebrochen.", components: [], allowedMentions: { parse: [] } });
+    return;
+  }
+  if (action === "pick") {
+    const selected = interaction.values?.length === 1 && /^([a-f0-9]{24}):([a-f0-9]{16})$/.exec(interaction.values[0]);
+    if (!selected) throw new ReportManagementError("Bitte genau einen Report aus der Liste auswählen.");
+    const record = store.get(selected[1], interaction.guild.id);
+    authorize(interaction, record);
+    if (revisionOf(record) !== selected[2]) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte /report-entfernen erneut verwenden.");
+    await interaction.deferUpdate();
+    await resolveChannel(interaction, record);
+    const { flags, ...prompt } = deletionPrompt(interaction, record);
+    await interaction.editReply(prompt);
+    return;
+  }
+  if (!season || Number(matchday) > 25) throw new ReportManagementError("Diese Auswahl ist ungültig. Bitte /report-entfernen erneut verwenden.");
+  await interaction.deferUpdate();
+  const query = { season: Number(season), playerId, matchday: Number(matchday) };
+  const matches = matchingRemovals(await removableMatches(interaction, store), query);
+  await interaction.editReply(removalPicker(interaction, matches, query, Number(page)));
 }
 
 async function openManagement(interaction, store, manager, roleId, settingsStore) {
   if (!interaction.guild) throw new ReportManagementError("Bitte verwende die Aktion auf dem Liga-Server.");
   if (interaction.commandName === "report-entfernen") {
-    const ref = messageReference(interaction.options.getString("nachricht", true));
-    if (ref.guildId !== interaction.guild.id) throw new ReportManagementError("Der Nachrichtenlink muss zu diesem Server gehören.");
-    const record = store.findByMessage(ref.guildId, ref.channelId, ref.messageId);
-    authorize(interaction, record);
-    await interaction.deferReply(privateReply);
-    await resolveChannel(interaction, record);
-    const { flags, ...prompt } = deletionPrompt(interaction, record);
-    await interaction.editReply(prompt);
+    await openRemoval(interaction, store);
     return;
   }
   const message = interaction.targetMessage;
@@ -229,6 +318,10 @@ async function correctionData(interaction, record, roleId, settingsStore, contex
 }
 
 async function handleManagementComponent(interaction, store, manager, roleId, settingsStore) {
+  if (/^manage:(pick|page|stop):/.test(interaction.customId)) {
+    await handleRemovalComponent(interaction, store);
+    return;
+  }
   const parsed = /^manage:(edit|delete|cancel|season|day|form|number):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})(?::([1-9]\d{0,3}):([1-9]\d?))?$/.exec(interaction.customId);
   if (!parsed || parsed[4] !== interaction.user.id) throw new ReportManagementError("Diese Aktion gehört zu einer anderen Person oder ist ungültig. Bitte erneut am Ergebnispost öffnen.");
   const [, action, id, revision, , selectedSeason, selectedDay] = parsed;
@@ -276,4 +369,4 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
     components: [], allowedMentions: { parse: [] } });
 }
 
-module.exports = { managementCommands, openManagement, handleManagementComponent, correctionModal, messageReference };
+module.exports = { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete, correctionModal };

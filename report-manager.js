@@ -41,7 +41,7 @@ class ReportManager {
             throw new ReportManagementError("Discord hat die Änderung abgelehnt; die Vormerkung konnte aber nicht aufgehoben werden. Bitte Speicher und Kanalrechte prüfen und die Aktion erneut öffnen.");
           }
           throw new ReportManagementError(Number(error.code) === 10008
-            ? "Der Ergebnispost existiert nicht mehr. Du kannst seinen Archiv-Eintrag mit /report-entfernen und dem alten Nachrichtenlink löschen."
+            ? "Der Ergebnispost existiert nicht mehr. Du kannst seinen Archiv-Eintrag mit /report-entfernen über Season, Spieler und optional Spieltag finden und löschen."
             : "Die Änderung wurde nicht durchgeführt. Bitte den Ergebnispost und die Kanalrechte des Bots prüfen und die Aktion erneut öffnen.");
         }
         throw new ReportManagementError("Der Ausgang der Änderung ist unklar. Sie bleibt gespeichert. Bitte dieselbe Aktion erneut am Post öffnen; der Bot wiederholt sie am bestehenden Post.");

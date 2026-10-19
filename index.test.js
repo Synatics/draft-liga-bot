@@ -137,6 +137,7 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(registeredCommands.find((command) => command.name === "liga").default_member_permissions,
     discord.PermissionFlagsBits.ManageGuild.toString());
   assert.equal(registeredCommands.find((command) => command.name === "suchen").options[1].autocomplete, true);
+  assert.equal(registeredCommands.find((command) => command.name === "report-entfernen").options[1].autocomplete, true);
   assert.equal(registeredCommands.filter((command) => command.type === discord.ApplicationCommandType.Message).length, 2);
 
   const command = {
@@ -354,4 +355,25 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(confirmation.response.content, /entfernt/);
   assert.equal(publicMessages.has("500000000000000001"), false);
   assert.equal(new MatchStore(archivePath).list(guild.id).length, 2);
+  // The slash fallback discovers a manually deleted post without its message link.
+  publicMessages.delete("500000000000000002");
+  const removalAutocomplete = { ...autocomplete, commandName: "report-entfernen" };
+  await handle(removalAutocomplete);
+  assert.deepEqual(removalAutocomplete.choices, [{ name: "Max", value: maxId }]);
+  const removal = {
+    ...search, user: management.user, member: management.member,
+    commandName: "report-entfernen", memberPermissions: management.memberPermissions,
+    options: { getInteger: (name) => name === "season" ? 3 : 2, getString: () => janId },
+  };
+  await handle(removal);
+  assert.match(removal.response.content, /Season 3 · Spieltag 2/);
+  const removeMissing = { ...confirmation, customId: removal.response.components[0].toJSON().components[0].custom_id };
+  await handle(removeMissing);
+  assert.match(removeMissing.response.content, /entfernt/);
+  assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
+  const failedSuggestions = { ...removalAutocomplete,
+    options: { getInteger: () => 4, getFocused() { throw new Error("Autocomplete unavailable"); } } };
+  await handle(failedSuggestions);
+  assert.equal(failedSuggestions.choices.length, 0);
+  assert.match(errors.at(-1)[0], /Suchvorschlägen/);
 });

@@ -127,4 +127,4 @@ async function handleSearchCommand(interaction, store) {
   });
 }
 
-module.exports = { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete, playerChoices, resultMessages };
+module.exports = { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete, playerChoices, resolvePlayer, resultMessages };
