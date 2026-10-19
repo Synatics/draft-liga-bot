@@ -6,6 +6,7 @@ class ReportPublisher {
 
   async publish(match, channel, message) {
     const record = this.store.add(match);
+    if (record.change) return { status: "maintenance" };
     if (!record.publication) return { status: "legacy" };
     if (record.publication.status === "published") {
       return { status: "duplicate", messageId: record.publication.messageId };

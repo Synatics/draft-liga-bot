@@ -14,6 +14,7 @@ Der Bot verwendet Node.js, CommonJS und discord.js 14. Liga-Einstellungen und Re
 - **Dauerhafte Speicherung:** Konfiguration und Archiv bleiben bei Neustarts erhalten, sofern das Datenverzeichnis auf persistentem Speicher liegt.
 - **Automatische Backups:** Der Bot sichert beide Datendateien täglich und bewahrt die letzten 14 Sicherungen auf. Ein Terminal-Befehl ermöglicht zusätzliche manuelle Sicherungen.
 - **Duplikatschutz:** Wiederholte und gleichzeitige Meldungen desselben Matches erzeugen keinen weiteren öffentlichen Post. Veröffentlichte Nachrichten werden im Archiv referenziert.
+- **Reports korrigieren und löschen:** Die beiden gespeicherten Match-Teilnehmer und Personen mit „Server verwalten“ können einen Ergebnispost über sein Nachrichtenmenü bearbeiten oder nach privater Bestätigung entfernen. Die Suche wird dabei mit aktualisiert.
 
 ## Voraussetzungen
 
@@ -46,6 +47,7 @@ Der Bot wird als Server-App installiert. Eine reine Installation zum persönlich
 | View Channel / Kanal anzeigen | Zugriff auf den Kanal für Ergebnisposts |
 | Send Messages / Nachrichten senden | Ergebnisposts veröffentlichen |
 | Embed Links / Links einbetten | Ergebnis als Embed anzeigen |
+| Read Message History / Nachrichtenverlauf anzeigen | Vorhandene Ergebnisposts für Korrekturen und Löschungen laden |
 | Send Messages in Threads / Nachrichten in Threads senden | Zusätzlich erforderlich, wenn Ergebnisse in Threads gepostet werden sollen |
 
 Die Rechte müssen auch in den konkreten Kanälen erlaubt sein; Kanal-Overrides können die Serverrechte überschreiben. Administrator- und Rollenverwaltungsrechte benötigt der Bot nicht. Er liest die Teilnehmerrolle, weist sie aber niemandem selbst zu.
@@ -142,7 +144,7 @@ Ein erfolgreicher Start protokolliert diese Meldungen:
 
 ```text
 ✅ Konfiguration und Datenspeicher geprüft.
-✅ Slash-Befehle bei Discord registriert: /report, /liga, /suchen
+✅ Discord-Befehle registriert: /report, /liga, /suchen, „Report korrigieren“, „Report löschen“, /report-entfernen
 ✅ Bot ist mit Discord verbunden.
 ```
 
@@ -152,7 +154,7 @@ Die lokale Prüfung eines Tokens betrifft fehlende Werte, den Beispielwert und L
 
 Eine noch nicht eingerichtete Season, ein fehlgeschlagenes Backup oder ein gescheiterter Mitgliederabruf sind keine fatalen Startfehler. Die Season lässt sich mit `/liga season` einrichten; Mitgliederabrufe und Backups können erneut versucht werden. Während der erste Mitgliederabruf läuft, bittet `/report` um einen erneuten Aufruf. Nach dem Laden öffnet sich das Formular ohne zusätzlichen Mitgliederabruf.
 
-Alle Slash-Befehle werden bei jedem Start **global für die Anwendung registriert**. Dabei ersetzt der Bot die globale Befehlsliste dieser Anwendung durch `/report`, `/liga` und `/suchen`. Für dieses Projekt sollte daher eine eigene Discord-Anwendung verwendet werden. Ein separates Deploy-Commands-Skript ist nicht nötig.
+Alle Anwendungsbefehle werden bei jedem Start **global für die Anwendung registriert**. Dabei ersetzt der Bot die globale Befehlsliste dieser Anwendung durch `/report`, `/liga`, `/suchen`, `/report-entfernen` und die beiden Nachrichtenaktionen „Report korrigieren“ und „Report löschen“. Für dieses Projekt sollte daher eine eigene Discord-Anwendung verwendet werden. Ein separates Deploy-Commands-Skript ist nicht nötig.
 
 ### 6. Erste Season einrichten
 
@@ -176,6 +178,9 @@ Alle Befehle werden **in einem Serverkanal** ausgeführt. `/suchen` liefert sein
 | `/liga season` | Season einrichten oder Konfiguration korrigieren | Server verwalten (`ManageGuild`) |
 | `/liga status` | Aktuelle Season, Spieltag und Startdatum anzeigen | Server verwalten (`ManageGuild`) |
 | `/suchen` | Gespeicherte Replays eines Spielers per DM abrufen | Anwendungsbefehle verwenden dürfen; lesbare Ergebnis-Kanäle und zustellbare DMs |
+| Nachrichtenaktion „Report korrigieren“ | Vorhandenen Ergebnispost und Suchtreffer korrigieren | Einer der beiden gespeicherten Match-Teilnehmer oder Server verwalten; Zugriff auf den Ergebniskanal |
+| Nachrichtenaktion „Report löschen“ | Ergebnispost und Archiv-Eintrag nach Bestätigung löschen | Dieselben Anforderungen wie bei Korrekturen |
+| `/report-entfernen nachricht:…` | Einen Report über den ursprünglichen Discord-Nachrichtenlink entfernen | Dieselben Anforderungen; funktioniert auch bei bereits gelöschtem Post |
 
 Der Aufruf von `/report` oder `/suchen` ist im Code nicht auf Personen mit Teilnehmerrolle beschränkt. Die Rolle bestimmt, welche Personen als Spieler für ein neues Match ausgewählt werden können. Zusätzliche Einschränkungen lassen sich über Discord-Kanal- und Integrationsrechte konfigurieren.
 
@@ -198,6 +203,30 @@ Beim Absenden werden die ausgewählten Mitglieder erneut geladen und auf Serverz
 Der Ergebnispost wird im **Kanal des Befehlsaufrufs** veröffentlicht. Die Bestätigung ist nur für die meldende Person sichtbar. Die öffentliche Nachricht enthält Season, Spieltag, beide Namen und Replay-Link; Gewinner, Verlierer und Score sind mit Discord-Spoilern markiert.
 
 Wurde dasselbe Match bereits veröffentlicht, erhält die meldende Person stattdessen einen Link zum bestehenden Ergebnispost. Während eines laufenden Versands erscheint ein entsprechender Hinweis. Ein anderer Score oder vertauschte Gewinner- und Verliererauswahl umgehen den Duplikatschutz nicht.
+
+### Reports korrigieren und entfernen
+
+**Korrigieren:** Den Ergebnispost rechtsklicken bzw. auf Mobilgeräten gedrückt halten, unter **Apps** die Aktion **Report korrigieren** auswählen und das vorausgefüllte Formular anpassen. Die Bezeichnung bzw. Platzierung des Nachrichtenmenüs kann je nach Discord-Client abweichen.
+
+Das Formular enthält `Season / Spieltag` im Format `4 / 3`, die Dropdowns für Gewinner und Verlierer, den Score und den Replay-Link. Season und Spieltag lassen sich damit auch nachträglich korrigieren, ohne die globale Liga-Konfiguration zu ändern. Erlaubt sind Season 1–9999 und Spieltag 1–25; in der aktuell eingerichteten Season gilt zusätzlich deren konfigurierte Spieltaganzahl.
+
+Die bisherigen Teilnehmer bleiben für historische Korrekturen auswählbar, auch ohne aktuelle Teilnehmerrolle oder Servermitgliedschaft. Zusätzliche Personen stammen aus der Teilnehmerrolle und werden beim Absenden erneut geprüft. Gespeicherte Namen bleiben für bereits beteiligte Personen erhalten. Bei identischen gespeicherten Namen muss die Zuordnung von Gewinner und Verlierer erneut ausgewählt werden; der Bot rät nicht. Das Formular unterstützt insgesamt höchstens 25 Teilnehmer.
+
+Nach dem Absenden wird **derselbe Post** bearbeitet. Sein Nachrichtenlink bleibt erhalten, Spoiler und Erwähnungsschutz bleiben aktiv, und `/suchen` verwendet die korrigierten Angaben. Ein zweiter Ergebnispost entsteht dabei nicht. Existiert für die neuen Angaben schon ein anderer Report, wird die Korrektur abgewiesen.
+
+**Löschen:** Am Ergebnispost unter **Apps → Report löschen** die private Rückfrage mit **Ja, Report löschen** bestätigen oder mit **Abbrechen** schließen. Erst die Bestätigung entfernt den öffentlichen Post und seinen Archiv-Eintrag. Das Match erscheint danach nicht mehr in neuen Suchen und kann bei Bedarf neu gemeldet werden.
+
+Wurde der Discord-Post bereits manuell gelöscht und ist sein ursprünglicher Nachrichtenlink noch bekannt, funktioniert dieselbe Archiv-Bereinigung über:
+
+```text
+/report-entfernen nachricht:https://discord.com/channels/SERVER_ID/KANAL_ID/NACHRICHTEN_ID
+```
+
+Auch dieser Befehl zeigt zuerst eine private Bestätigung. Er nimmt den **Discord-Nachrichtenlink**, nicht den Replay-Link. Die Aktion funktioniert nur für gespeicherte Reports mit bekannter Nachrichten-ID. Ältere Archiveinträge ohne diese Verknüpfung und Meldungen mit unklarem ursprünglichem Versandstatus werden nicht automatisch zugeordnet.
+
+**Zugriff:** Berechtigt sind die im Archiv gespeicherten beiden Match-Teilnehmer sowie Personen mit `ManageGuild` / Server verwalten. Eine zusätzliche Rolle ist nicht erforderlich. Die Berechtigung wird beim Öffnen und beim Absenden bzw. Bestätigen erneut geprüft. Zusätzlich muss die Person den Ergebniskanal und Nachrichtenverlauf lesen dürfen; bei privaten Threads prüft der Bot vor der Änderung die aktuelle Mitgliedschaft oder `ManageThreads`. Der Bot bearbeitet und löscht nur eigene Posts und benötigt dafür kein Recht zum Verwalten fremder Nachrichten.
+
+Ein Formular oder eine Bestätigung kann nur von der Person verwendet werden, die es geöffnet hat. Wurde der Report zwischenzeitlich geändert, muss die Aktion erneut geöffnet werden. Bereits verschickte Such-DMs und vorhandene Backups werden durch Korrekturen oder Löschungen nicht nachträglich verändert.
 
 ### `/liga season` und `/liga status`
 
@@ -270,7 +299,9 @@ Die Auswahl des Datenverzeichnisses erfolgt in dieser Reihenfolge:
 | `league-settings.json` | Formatversion 1; Objekt `guilds`, das pro Server-ID `season`, `matchdays` und `startDate` enthält |
 | `matches.json` | Formatversion 1; Array `matches` mit den gespeicherten Replay-Metadaten |
 
-Ein Match enthält `guildId`, `channelId`, `season`, `matchday`, zwei `players` mit jeweils `id` und `name` sowie `link`. Die Spieler werden in einer stabilen Reihenfolge nach ID gespeichert, ohne Gewinner und Verlierer zu kennzeichnen. Der Score wird nicht im Archiv gespeichert.
+Ein Match enthält `guildId`, `channelId`, `season`, `matchday`, zwei `players` mit jeweils `id` und `name` sowie `link`. Die Spieler werden in einer stabilen Reihenfolge nach ID gespeichert, ohne Gewinner und Verlierer zu kennzeichnen. Abgeschlossene Archiv-Einträge enthalten keinen Score.
+
+Abgeschlossene Korrekturen ergänzen einen Zähler `revision`, damit veraltete Formulare erkannt werden. Während einer laufenden Korrektur bzw. Löschung enthält der Eintrag außerdem vorübergehend `change`: die Art der Änderung und bei einer Korrektur die gewünschten Metadaten sowie das vollständig formatierte Embed. Dieses vorübergehende Embed enthält auch Gewinner, Verlierer und Score, damit ein unterbrochener Versuch idempotent am selben Discord-Post wiederholt werden kann. Nach erfolgreichem Abschluss wird `change` entfernt. Ein währenddessen erstelltes Backup kann diese vorübergehenden Daten bis zu seiner regulären Entfernung weiterhin enthalten. Die Suche gibt ausschließlich Teilnehmer, Spieltag und Replay-Link aus.
 
 Neue Einträge enthalten zusätzlich eine zufällige, 24 Zeichen lange hexadezimale `id` und das Objekt `publication`. Darin werden `status` und bei bestätigter Veröffentlichung die Discord-`messageId` gespeichert. Die Formatversion bleibt 1; bestehende Einträge ohne diese Metadaten bleiben lesbar und durchsuchbar. Sie werden beim Laden nicht umgeschrieben und nicht erneut automatisch veröffentlicht, da ihr bisheriger Versandstatus unbekannt ist.
 
@@ -299,6 +330,16 @@ Zusätzlich nutzt der Discord-Aufruf die Match-ID als `nonce` mit `enforceNonce`
 
 Ein gespeicherter Treffer ist weiterhin unabhängig vom Versandstatus über `/suchen` auffindbar. Bereits vorhandene doppelte Discord-Posts werden durch das Update nicht gelöscht.
 
+### Laufende Korrekturen und Löschungen
+
+Eine Änderung wird vor dem ersten Discord-Aufruf dauerhaft im Archiv vorgemerkt. Gleichzeitig ausgeführte Änderungen desselben Reports werden gesperrt. Bei Korrekturen schützt der Duplikatschutz währenddessen sowohl die bisherigen als auch die gewünschten Match-Angaben. Der Archiv-Eintrag für die Suche wechselt erst nach erfolgreicher Discord-Antwort auf die neuen Angaben bzw. wird erst dann entfernt.
+
+Schlägt die Speicherung der Vormerkung fehl, erfolgt keine Änderung in Discord. Eine eindeutige Ablehnung eines frisch begonnenen Versuchs hebt die Vormerkung wieder auf, sofern der Datenspeicher dies zulässt. Bei unklarem Netzwerkergebnis oder fehlgeschlagener abschließender Speicherung bleibt sie erhalten, auch nach einem Neustart. Die private Rückmeldung erklärt den Fehler. Der Bot erstellt dabei keinen Ersatzpost und wiederholt Änderungen nicht im Hintergrund.
+
+Zum Fortsetzen einer vorgemerkten Korrektur erneut **Report korrigieren** am bestehenden Post öffnen. Der Bot schließt zuerst die bisherige Änderung ab; für weitere Änderungen die Aktion danach erneut öffnen. Eine vorgemerkte Löschung wird durch **Report löschen** und erneutes Bestätigen bzw. über `/report-entfernen` abgeschlossen. Ist der Post bereits entfernt, gilt dessen Fehlen für die Löschung als Erfolg. Eine bestätigte Löschung kann auch eine noch ungeklärte Korrektur desselben Posts ersetzen.
+
+Falls die Rechte oder der Datenspeicher weiterhin fehlen, bleibt die Vormerkung erhalten. Sie wird bei einem fehlgeschlagenen Wiederholungsversuch nicht verworfen, weil der frühere Versuch bereits in Discord angekommen sein könnte. Bei älteren Reports ohne bekannte Nachrichten-ID bleibt die bisherige manuelle Prüfung erforderlich.
+
 ### Unklaren Versandstatus manuell prüfen
 
 Dieser Sonderfall erfordert eine Prüfung durch die Person, die den Bot betreibt:
@@ -321,7 +362,7 @@ Anschließend `publication` wie oben beschrieben auf `pending` bzw. `published` 
 
 - Das Archiv enthält nur Reports, die der Bot über `/report` gespeichert hat. Es gibt keinen Import alter Discord-Nachrichten.
 - Neue Seasons löschen keine früheren Matches. Auch die Suche nach abgeschlossenen Seasons bleibt verfügbar.
-- Das Ändern oder Löschen eines Discord-Ergebnisposts verändert den Archiv-Eintrag nicht. Ein Befehl zum Bearbeiten oder Löschen von Archiv-Einträgen ist derzeit nicht implementiert.
+- Nur die Bot-Aktionen zum Korrigieren und Löschen halten Discord-Post und Archiv gemeinsam aktuell. Manuelles Löschen in Discord entfernt den Archiv-Eintrag nicht; bei bekanntem Nachrichtenlink kann `/report-entfernen` ihn bereinigen.
 - Für jede Installation sind höchstens 25 Teilnehmer und 25 Spieltage pro Season vorgesehen.
 - Eine Bot-Instanz muss dauerhaft laufen, damit die Befehle beantwortet werden. Der Code stellt keinen HTTP-Endpunkt für eine Webseite oder einen Healthcheck bereit.
 - **Nur eine laufende Instanz pro gemeinsamem Datenverzeichnis betreiben.** Es gibt keine Dateisperren oder Synchronisation zwischen mehreren Prozessen.
@@ -416,7 +457,7 @@ npm test
 
 Die Tests verwenden den integrierten Node.js-Test-Runner `node:test`, echte discord.js-Komponenten, simulierte Discord-Interaktionen und temporäre Dateien. Sie brauchen weder Bot-Token noch Discord-Verbindung und versenden keine Nachrichten.
 
-Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, Speicher- oder Discord-Fehlern, Zeitlimits und tokenfreie Startmeldungen, Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, tägliche Backups, Aufbewahrung und Wiederherstellung, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
+Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, Speicher- oder Discord-Fehlern, Zeitlimits und tokenfreie Startmeldungen, Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Korrekturen und bestätigte Löschungen samt Berechtigungen und Neustarts, ältere Archivdateien, tägliche Backups, Aufbewahrung und Wiederherstellung, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
 
 | Datei | Aufgabe |
 | --- | --- |
@@ -424,6 +465,8 @@ Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, 
 | [`startup.js`](startup.js) | Konfiguration und Datenspeicher prüfen, Discord-Start koordinieren und bei Startfehlern beenden |
 | [`reports.js`](reports.js) | Teilnehmerauswahl, Modal, Validierung und Ergebnis-Embed |
 | [`report-publisher.js`](report-publisher.js) | Persistenter Duplikatschutz und Versand von Ergebnisposts |
+| [`report-management.js`](report-management.js) | Nachrichtenaktionen, Korrekturformular, Löschbestätigung und Zugriffsprüfung |
+| [`report-manager.js`](report-manager.js) | Dauerhafte Vormerkung und Wiederholung von Änderungen am bestehenden Ergebnispost |
 | [`league-commands.js`](league-commands.js) | `/liga`-Definition und Verarbeitung |
 | [`league-settings.js`](league-settings.js) | Season-Konfiguration, Kalenderberechnung und Datenpfad |
 | [`match-store.js`](match-store.js) | Replay-Archiv, URL-Validierung und Duplikaterkennung |
@@ -459,3 +502,5 @@ Abgedeckt werden unter anderem Startprüfungen und Abbruch bei Konfigurations-, 
 | Report meldet einen unklaren Versandstatus | Kanal und Archiv wie unter „Unklaren Versandstatus manuell prüfen“ kontrollieren; ein Neustart hebt die Sperre absichtlich nicht auf |
 | Alter Report wird nicht erneut gepostet | Bestands-Einträge haben keinen Veröffentlichungsstatus und werden vorsichtshalber nicht erneut gesendet |
 | Trotzdem doppelte Ergebnisposts | Prüfen, ob eine ältere Bot-Version läuft, Angaben wie Kanal oder Spieltag abweichen oder mehrere Prozesse mit demselben Token bzw. Datenverzeichnis laufen |
+| Korrektur oder Löschung meldet einen unterbrochenen Versuch | Kanalrechte und Datenspeicher prüfen; die betreffende Aktion erneut am Ergebnispost öffnen bzw. bei fehlendem Post `/report-entfernen` mit dessen ursprünglichem Nachrichtenlink verwenden |
+| Nachrichtenaktion kann den Report nicht zuordnen | Es muss ein eigener Ergebnispost mit gespeicherter Nachrichten-ID sein; Bestands-Einträge ohne diese Verknüpfung weiterhin manuell prüfen |

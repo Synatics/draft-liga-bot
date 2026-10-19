@@ -1,6 +1,7 @@
 const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = require("node:fs");
 const { dirname } = require("node:path");
-const { randomBytes, randomUUID } = require("node:crypto");
+const { randomBytes, randomUUID, createHash } = require("node:crypto");
+const { EmbedBuilder } = require("discord.js");
 
 class MatchStoreError extends Error {}
 
@@ -43,6 +44,56 @@ function validateMatch(match) {
     }
     validatePublication(match.publication);
   }
+  if (match.revision !== undefined && (!Number.isSafeInteger(match.revision) || match.revision < 0)) {
+    throw new MatchStoreError("Ungültige Report-Version im Replay-Archiv.");
+  }
+  if (match.change !== undefined) {
+    if (match.publication?.status !== "published") throw new MatchStoreError("Änderungen benötigen einen veröffentlichten Report.");
+    validateChange(match.change, match);
+  }
+}
+
+function matchData(match) {
+  validateMatch(match);
+  return {
+    guildId: match.guildId, channelId: match.channelId, season: match.season, matchday: match.matchday,
+    players: match.players.map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)),
+    link: normalizeReplayLink(match.link),
+  };
+}
+
+function sameMatch(a, b) {
+  return a.guildId === b.guildId && a.channelId === b.channelId && a.season === b.season &&
+    a.matchday === b.matchday && normalizeReplayLink(a.link) === normalizeReplayLink(b.link) &&
+    a.players.map((player) => player.id).sort().join() === b.players.map((player) => player.id).sort().join();
+}
+
+function revisionOf(match) {
+  return createHash("sha256").update(JSON.stringify(match)).digest("hex").slice(0, 16);
+}
+
+function validateChange(change, match) {
+  if (!change || !["edit", "delete"].includes(change.kind)) throw new MatchStoreError("Ungültige laufende Report-Änderung.");
+  if (change.kind === "delete") {
+    if (Object.keys(change).length !== 1) throw new MatchStoreError("Ungültiger Löschauftrag.");
+    return;
+  }
+  const target = change.target;
+  if (Object.keys(change).sort().join() !== "embed,kind,target") throw new MatchStoreError("Ungültige Korrekturdaten.");
+  if (!target || Object.keys(target).sort().join() !== "channelId,guildId,link,matchday,players,season") {
+    throw new MatchStoreError("Ungültige Korrekturdaten.");
+  }
+  validateMatch(target);
+  if (target.guildId !== match.guildId || target.channelId !== match.channelId) {
+    throw new MatchStoreError("Ein Report kann nicht auf einen anderen Server oder in einen anderen Kanal verschoben werden.");
+  }
+  try {
+    const embed = new EmbedBuilder(change.embed).toJSON();
+    if (embed.author?.name !== `Season ${target.season} · Spieltag ${target.matchday}` ||
+        embed.fields?.map((field) => field.name).join() !== "Gewinner,Verlierer,Score,Replay Link" ||
+        embed.fields.slice(0, 3).some((field) => !field.value.startsWith("|| ") || !field.value.endsWith(" ||")) ||
+        embed.fields[3].value !== target.link) throw new Error();
+  } catch { throw new MatchStoreError("Ungültiger Ergebnispost für die Korrektur."); }
 }
 
 function parseMatchesDocument(text) {
@@ -77,21 +128,24 @@ class MatchStore {
     return structuredClone(this.matches.filter((match) => match.guildId === guildId));
   }
 
+  get(id, guildId) {
+    const match = this.matches.find((entry) => entry.id === id && entry.guildId === guildId);
+    if (!match) throw new MatchStoreError("Dieser Report wurde im Archiv nicht gefunden oder bereits entfernt.");
+    return structuredClone(match);
+  }
+
+  findByMessage(guildId, channelId, messageId) {
+    const found = this.matches.filter((entry) => entry.guildId === guildId && entry.channelId === channelId &&
+      entry.publication?.messageId === messageId);
+    if (found.length !== 1) throw new MatchStoreError("Dieser Post ist nicht eindeutig mit dem Replay-Archiv verknüpft. Ältere Posts ohne gespeicherte Nachrichten-ID müssen manuell geprüft werden.");
+    return structuredClone(found[0]);
+  }
+
   add(match) {
-    validateMatch(match);
     // Store only search metadata, with a stable order independent of the winner.
-    const record = {
-      guildId: match.guildId,
-      channelId: match.channelId,
-      season: match.season,
-      matchday: match.matchday,
-      players: match.players.map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)),
-      link: normalizeReplayLink(match.link),
-    };
-    const duplicate = this.matches.find((entry) => entry.guildId === record.guildId &&
-      entry.channelId === record.channelId && entry.season === record.season &&
-      entry.matchday === record.matchday && entry.link === record.link &&
-      entry.players.map((player) => player.id).sort().every((id, index) => id === record.players[index].id));
+    const record = matchData(match);
+    const duplicate = this.matches.find((entry) => sameMatch(entry, record) ||
+      (entry.change?.kind === "edit" && sameMatch(entry.change.target, record)));
     if (duplicate) return structuredClone(duplicate);
     do {
       record.id = randomBytes(12).toString("hex");
@@ -99,6 +153,32 @@ class MatchStore {
     record.publication = { status: "pending" };
     this.save([...this.matches, record]);
     return structuredClone(record);
+  }
+
+  beginChange(id, guildId, expectedRevision, change) {
+    const match = this.get(id, guildId);
+    if (revisionOf(match) !== expectedRevision || (match.change && change.kind !== "delete")) {
+      throw new MatchStoreError("Dieser Report wurde inzwischen geändert. Bitte öffne die Aktion erneut am Ergebnispost.");
+    }
+    if (match.publication?.status !== "published") throw new MatchStoreError("Der Report wurde noch nicht bestätigt veröffentlicht.");
+    validateChange(change, match);
+    if (change.kind === "edit" && this.matches.some((entry) => entry.id !== id &&
+        (sameMatch(entry, change.target) || (entry.change?.kind === "edit" && sameMatch(entry.change.target, change.target))))) {
+      throw new MatchStoreError("Für diese Angaben existiert bereits ein anderer Report. Bitte prüfe die Season, den Spieltag und den Replay-Link.");
+    }
+    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, change: structuredClone(change) } : entry));
+  }
+
+  finishChange(id, guildId, cancel = false) {
+    const match = this.get(id, guildId);
+    if (!match.change) throw new MatchStoreError("Für diesen Report läuft keine Änderung.");
+    if (!cancel && match.change.kind === "delete") {
+      this.save(this.matches.filter((entry) => entry.id !== id));
+      return;
+    }
+    const { change, ...previous } = match;
+    const record = cancel ? previous : { ...previous, ...change.target, revision: (match.revision || 0) + 1 };
+    this.save(this.matches.map((entry) => entry.id === id ? record : entry));
   }
 
   setPublication(id, publication) {
@@ -130,4 +210,4 @@ class MatchStore {
   }
 }
 
-module.exports = { MatchStore, MatchStoreError, normalizeReplayLink, parseMatchesDocument };
+module.exports = { MatchStore, MatchStoreError, normalizeReplayLink, parseMatchesDocument, matchData, revisionOf };

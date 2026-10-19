@@ -19,6 +19,8 @@ const { LeagueSettingsError } = require("./league-settings");
 const { leagueCommand, handleLeagueCommand } = require("./league-commands");
 const { MatchStoreError, normalizeReplayLink } = require("./match-store");
 const { ReportPublisher } = require("./report-publisher");
+const { ReportManager, ReportManagementError } = require("./report-manager");
+const { managementCommands, openManagement, handleManagementComponent } = require("./report-management");
 const { DataBackups, startAutomaticBackups } = require("./data-backups");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 const { prepareStartup, connectDiscord, failStartup } = require("./startup");
@@ -30,6 +32,7 @@ async function startBot() {
   const { participantRoleId } = config;
   console.log("✅ Konfiguration und Datenspeicher geprüft.");
   const reportPublisher = new ReportPublisher(matchStore);
+  const reportManager = new ReportManager(matchStore);
   client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
   });
@@ -69,6 +72,7 @@ async function startBot() {
     },
     leagueCommand,
     searchCommand,
+    ...managementCommands,
   ];
 
   const rest = new REST({ version: "10", timeout: 15_000, retries: 1 }).setToken(config.token);
@@ -78,12 +82,26 @@ async function startBot() {
     const isLeagueCommand = interaction.isChatInputCommand() && interaction.commandName === "liga";
     const isSearchCommand = interaction.isChatInputCommand() && interaction.commandName === "suchen";
     const isSearchAutocomplete = interaction.isAutocomplete() && interaction.commandName === "suchen";
+    const isManagementCommand = (interaction.isMessageContextMenuCommand?.() &&
+      ["Report korrigieren", "Report löschen"].includes(interaction.commandName)) ||
+      (interaction.isChatInputCommand() && interaction.commandName === "report-entfernen");
+    const isManagementComponent = (interaction.isButton?.() || interaction.isModalSubmit()) &&
+      interaction.customId?.startsWith("manage:");
     const isReportSubmit = interaction.isModalSubmit() && (
       interaction.customId === "submit_report" || interaction.customId.startsWith("submit_report:")
     );
-    if (!isReportCommand && !isReportSubmit && !isLeagueCommand && !isSearchCommand && !isSearchAutocomplete) return;
+    if (!isReportCommand && !isReportSubmit && !isLeagueCommand && !isSearchCommand && !isSearchAutocomplete &&
+        !isManagementCommand && !isManagementComponent) return;
 
     try {
+      if (isManagementCommand) {
+        await openManagement(interaction, matchStore, reportManager, participantRoleId);
+        return;
+      }
+      if (isManagementComponent) {
+        await handleManagementComponent(interaction, matchStore, reportManager, participantRoleId, settingsStore);
+        return;
+      }
       if (isSearchAutocomplete) {
         await handleSearchAutocomplete(interaction, matchStore);
         return;
@@ -139,6 +157,7 @@ async function startBot() {
         published: "✅ Ergebnis erfolgreich gepostet!",
         duplicate: `ℹ️ Dieses Match wurde bereits gepostet: <${messageLink}>`,
         "in-progress": "ℹ️ Dieses Match wird gerade gepostet. Bitte warte kurz.",
+        maintenance: "ℹ️ Dieser Report wird gerade korrigiert oder entfernt. Bitte warte, bis die Änderung abgeschlossen ist.",
         legacy: "ℹ️ Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
         failed: "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
         "failed-unconfirmed": "❌ Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
@@ -159,7 +178,7 @@ async function startBot() {
         return;
       }
       const expected = error instanceof ReportError || error instanceof LeagueSettingsError ||
-        error instanceof MatchStoreError || error instanceof SearchError;
+        error instanceof MatchStoreError || error instanceof SearchError || error instanceof ReportManagementError;
       if (!expected) console.error("Fehler beim Verarbeiten des Reports:", error);
       const content = expected
         ? `❌ ${error.message}`

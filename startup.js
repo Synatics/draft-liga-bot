@@ -98,7 +98,8 @@ async function connectDiscord(client, rest, commands, config, { logger = console
         throw new StartupError("Slash-Befehle konnten nicht registriert werden. Bitte CLIENT_ID, das zugehörige DISCORD_TOKEN und die Verbindung zu Discord prüfen.");
       }
       controller.signal.throwIfAborted();
-      logger.log(`✅ Slash-Befehle bei Discord registriert: ${commands.map((command) => `/${command.name}`).join(", ")}`);
+      logger.log(`✅ Discord-Befehle registriert: ${commands.map((command) => command.type === 3
+        ? `„${command.name}“` : `/${command.name}`).join(", ")}`);
       // Install the listener before login: a fast client may become ready before login resolves.
       const ready = once(client, Events.ClientReady, { signal: controller.signal });
       try {

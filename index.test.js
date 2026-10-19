@@ -31,6 +31,8 @@ test("league settings, reports and role changes work together without exposing r
   }]));
   const sequence = [];
   const posts = [];
+  const publicMessages = new Map();
+  const botId = "600000000000000001";
   let finishLoading;
   let loads = 0;
   const loading = new Promise((resolve) => { finishLoading = resolve; });
@@ -38,6 +40,11 @@ test("league settings, reports and role changes work together without exposing r
     id: "300000000000000001",
     roles: { cache: new discord.Collection([[roleId, {}]]) },
     channels: { cache: new discord.Collection([[channelId, {
+      id: channelId, guildId: "300000000000000001",
+      messages: { async fetch({ message }) {
+        if (!publicMessages.has(message)) throw Object.assign(new Error("Unknown Message"), { code: 10008, status: 404 });
+        return publicMessages.get(message);
+      } },
       permissionsFor: () => new discord.PermissionsBitField([
         discord.PermissionFlagsBits.ViewChannel, discord.PermissionFlagsBits.ReadMessageHistory,
       ]),
@@ -52,9 +59,11 @@ test("league settings, reports and role changes work together without exposing r
       },
     },
   };
+  guild.channels.fetch = async (id) => guild.channels.cache.get(id);
   initialStore.setSeason(guild.id, 3, 9, "31.08.2026");
   const client = new EventEmitter();
   client.guilds = { cache: new discord.Collection([[guild.id, guild]]) };
+  client.user = { id: botId };
   client.login = async () => { client.emit(discord.Events.ClientReady); };
   client.destroy = async () => {};
   const source = readFileSync(require.resolve("./index"), "utf8");
@@ -83,6 +92,7 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "dotenv") return { config() {} };
       if (name === "./reports") return reports;
       if (name === "./report-publisher") return require(name);
+      if (name === "./report-manager" || name === "./report-management") return require(name);
       if (name === "./startup") return {
         ...require(name),
         prepareStartup(env) {
@@ -127,6 +137,7 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(registeredCommands.find((command) => command.name === "liga").default_member_permissions,
     discord.PermissionFlagsBits.ManageGuild.toString());
   assert.equal(registeredCommands.find((command) => command.name === "suchen").options[1].autocomplete, true);
+  assert.equal(registeredCommands.filter((command) => command.type === discord.ApplicationCommandType.Message).length, 2);
 
   const command = {
     guild, commandName: "report", isChatInputCommand: () => true, isModalSubmit: () => false,
@@ -157,7 +168,13 @@ test("league settings, reports and role changes work together without exposing r
       ]),
       channel: { async send(message) {
         posts.push(message);
-        return { id: String(500000000000000000n + BigInt(posts.length)) };
+        const id = String(500000000000000000n + BigInt(posts.length));
+        const post = { id, author: { id: botId }, embeds: message.embeds.map((embed) => embed.toJSON()),
+          async edit(payload) { this.embeds = payload.embeds; },
+          async delete() { publicMessages.delete(id); },
+        };
+        publicMessages.set(id, post);
+        return post;
       } },
       async deferReply(payload) {
         sequence.push("defer");
@@ -289,4 +306,40 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(posts.length, 3);
   await handle(submission(4));
   assert.equal(posts.length, 3, "A successful retry must be protected from subsequent duplicate posts");
+
+  const management = {
+    guild, channel: guild.channels.cache.get(channelId), channelId, client, user: { id: janId },
+    member: members.get(janId), memberPermissions: new discord.PermissionsBitField([]),
+    commandName: "Report korrigieren", targetMessage: publicMessages.get("500000000000000001"),
+    isChatInputCommand: () => false, isMessageContextMenuCommand: () => true, isModalSubmit: () => false,
+    async showModal(modal) { this.modal = modal.toJSON(); },
+    async reply(payload) { this.response = payload; },
+  };
+  await handle(management);
+  assert.equal(management.modal.title, "Report korrigieren");
+  const correction = {
+    ...management, isMessageContextMenuCommand: () => false, isModalSubmit: () => true,
+    customId: management.modal.custom_id,
+    fields: {
+      getTextInputValue: (name) => ({ context: "3 / 3", score: "1-0", link: "https://example.org/corrected" })[name],
+      getStringSelectValues: (name) => [name === "winner" ? maxId : janId],
+    },
+    async deferReply() { this.deferred = true; },
+    async editReply(payload) { this.response = payload; },
+  };
+  await handle(correction);
+  assert.match(correction.response.content, /korrigiert/);
+  assert.equal(posts.length, 3, "Correcting a report edits its post instead of sending a new one");
+  assert.equal(new MatchStore(archivePath).list(guild.id).find((match) => match.publication.messageId === "500000000000000001").matchday, 3);
+  const deletion = { ...management, commandName: "Report löschen" };
+  await handle(deletion);
+  const confirmation = {
+    ...management, isMessageContextMenuCommand: () => false, isButton: () => true,
+    customId: deletion.response.components[0].toJSON().components[0].custom_id,
+    async deferUpdate() { this.deferred = true; }, async editReply(payload) { this.response = payload; },
+  };
+  await handle(confirmation);
+  assert.match(confirmation.response.content, /entfernt/);
+  assert.equal(publicMessages.has("500000000000000001"), false);
+  assert.equal(new MatchStore(archivePath).list(guild.id).length, 2);
 });
