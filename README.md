@@ -16,13 +16,15 @@ Der Bot verwendet Node.js, CommonJS und discord.js 14. Liga-Einstellungen und Re
 
 ## Voraussetzungen
 
-- [Node.js](https://nodejs.org/en/download), empfohlen **Node.js 24 LTS**, und npm. Für den Betrieb eine noch unterstützte LTS-Version verwenden; siehe [Node.js Release-Status](https://nodejs.org/en/about/previous-releases).
+- **[Node.js 24 LTS](https://nodejs.org/en/download)** und das mitgelieferte npm. Den Release-Status dokumentiert das [Node.js-Projekt](https://nodejs.org/en/about/previous-releases).
 - Git zum Klonen des Repositories.
 - Eine eigene Discord-Anwendung mit Bot-Token und Zugang zu einem Discord-Server für die Installation.
 - Mindestens zwei menschliche Liga-Teilnehmer mit einer gemeinsamen Teilnehmerrolle.
 - Ein beschreibbares, für dauerhaften Betrieb persistentes Datenverzeichnis.
 
 Die aktuelle Teilnehmerkonfiguration enthält **eine Rollen-ID pro Bot-Instanz**. Die Einrichtung ist deshalb auf einen Liga-Server pro Instanz ausgelegt. Einstellungen und Archiv sind intern zusätzlich nach Server-ID getrennt.
+
+Die unterstützte Node.js-Reihe ist in `package.json` mit `engines.node: "24.x"` und in [`.nvmrc`](.nvmrc) mit `24` festgelegt. Dadurch bleiben neuere Minor- und Patch-Versionen innerhalb von Node.js 24 möglich. [`.npmrc`](.npmrc) aktiviert `engine-strict`, sodass npm die Installation mit einer unpassenden Node.js-Version abbricht. Diese Dateien installieren oder aktivieren lokal keine Node.js-Version automatisch; auch `npm start` wechselt die Laufzeit nicht selbst.
 
 ## Installation
 
@@ -64,6 +66,19 @@ Die Auswahl unterstützt **2 bis 25 Teilnehmer**. Bei identischen Namen ergänzt
 ```sh
 git clone https://github.com/Synatics/draft-liga-bot.git
 cd draft-liga-bot
+```
+
+Vor der Installation Node.js 24 aktivieren. Mit einem bereits eingerichteten [NVM for Windows](https://github.com/coreybutler/nvm-windows) oder [nvm unter Linux/macOS](https://github.com/nvm-sh/nvm) geht das so:
+
+```sh
+nvm install 24
+nvm use 24
+```
+
+Unter Linux/macOS lesen auch `nvm install` und `nvm use` ohne Versionsangabe die `.nvmrc`. Ohne Versionsmanager eine aktuelle Node.js-24-Version über die offizielle Downloadseite installieren. Danach im Terminal prüfen, dass `node --version` mit `v24.` beginnt, und die Abhängigkeiten installieren:
+
+```sh
+node --version
 npm ci
 ```
 
@@ -307,11 +322,13 @@ Der Bot läuft als dauerhafter Node.js-Service. Ein öffentliches Domain-Mapping
 
 1. Dieses Repository forken oder eine eigene Kopie auf GitHub anlegen.
 2. In Railway einen Service aus diesem GitHub-Repository erstellen und den gewünschten Deployment-Branch auswählen.
-3. Die Node.js-Erkennung verwenden; für eine manuelle Installation `npm ci` und als Start Command **`npm start`** konfigurieren.
+3. Den Builder **Railpack** mit Node.js-Erkennung verwenden. Er liest `engines.node` aus `package.json` und wählt eine Node.js-24-Version. Für eine manuelle Installation `npm ci` und als Start Command **`npm start`** konfigurieren.
 4. Unter **Variables** die Werte für `DISCORD_TOKEN`, `CLIENT_ID` und `PARTICIPANT_ROLE_ID` der eigenen Discord-Anwendung hinterlegen.
 5. Im Projekt ein **Volume** hinzufügen, mit dem Bot-Service verbinden und den **Mount Path auf `/data`** setzen.
 6. Den Service deployen und in den Logs Discord-Verbindung und Befehlsregistrierung prüfen.
 7. Auf dem Discord-Server einmal `/liga season` ausführen und danach Report, Suche sowie einen Neustart testen.
+
+Die Variable `RAILPACK_NODE_VERSION` hat Vorrang vor der Versionsangabe im Repository. Falls sie bereits gesetzt ist, entfernen oder ebenfalls auf `24` setzen. Nach dem nächsten Deployment in den Build-Logs prüfen, dass Node.js 24 verwendet wird. Details zur Auswahl stehen in der [Railpack-Dokumentation für Node.js](https://railpack.com/languages/node). Ein bereits laufendes Deployment wechselt seine Node.js-Version erst mit einem neuen Build.
 
 Railway setzt `RAILWAY_VOLUME_MOUNT_PATH` und `RAILWAY_ENVIRONMENT_ID` selbst. Diese Variablen nicht von Hand mit Platzhaltern befüllen. Ohne eigene `DATA_DIR`-Variable verwendet der Bot automatisch das Volume und speichert dort:
 
@@ -354,6 +371,7 @@ Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerf
 
 | Problem | Prüfen / Lösung |
 | --- | --- |
+| `npm ci` meldet `EBADENGINE` oder eine nicht unterstützte Node.js-Version | Mit `node --version` die aktive Laufzeit prüfen und Node.js 24 aktivieren; auf Railway zusätzlich eine abweichende `RAILPACK_NODE_VERSION` korrigieren |
 | Ein Slash-Befehl fehlt | Registrierungsmeldung im Terminal prüfen; Discord mit Strg+R bzw. im Browser mit F5 neu laden; richtigen Server und richtige Bot-Anwendung prüfen |
 | Registrierung schlägt fehl | `CLIENT_ID` muss zum `DISCORD_TOKEN` gehören; Token, Netzwerkzugriff und Fehlermeldung im Terminal prüfen |
 | Nur `/liga` fehlt | Account benötigt Server verwalten; zusätzlich Discord-Integrationsrechte prüfen |
