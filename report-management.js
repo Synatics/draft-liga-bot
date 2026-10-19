@@ -23,9 +23,27 @@ const managementCommands = [
 const privateReply = { flags: [MessageFlags.Ephemeral], allowedMentions: { parse: [] } };
 const customId = (action, record, userId, context) => `manage:${action}:${record.id}:${revisionOf(record)}:${userId}` +
   (context ? `:${context.season}:${context.matchday}` : "");
+const correctionDrafts = new WeakMap();
+
+function correctionDraft(store, interaction, record, context) {
+  const messageId = interaction.message?.id;
+  if (!messageId) return { context };
+  if (!correctionDrafts.has(store)) correctionDrafts.set(store, new Map());
+  const drafts = correctionDrafts.get(store);
+  const now = Date.now();
+  for (const [key, draft] of drafts) if (draft.expiresAt <= now) drafts.delete(key);
+  const key = `${record.guildId}:${record.id}:${revisionOf(record)}:${interaction.user.id}:${messageId}`;
+  if (!drafts.has(key)) drafts.set(key, { context, expiresAt: now + 15 * 60_000 });
+  return drafts.get(key);
+}
 
 function activeSettings(settingsStore, guildId) {
   try { return settingsStore?.get(guildId); } catch { return undefined; }
+}
+
+function selectedContext(requested, settings) {
+  return { season: requested.season,
+    matchday: Math.min(requested.matchday, settings?.season === requested.season ? settings.matchdays : 25) };
 }
 
 function validateContext(context, settingsStore, guildId) {
@@ -42,7 +60,7 @@ function validateContext(context, settingsStore, guildId) {
 function contextPrompt(interaction, record, store, settingsStore, requested = record, source = interaction.targetMessage || interaction.message) {
   const settings = activeSettings(settingsStore, record.guildId);
   const maximum = settings?.season === requested.season ? settings.matchdays : 25;
-  const context = { season: requested.season, matchday: Math.min(requested.matchday, maximum) };
+  const context = selectedContext(requested, settings);
   const required = new Set([record.season, context.season, ...(settings ? [settings.season] : [])]);
   const seasons = [...new Set([...store.list(record.guildId).map((match) => match.season), ...required])]
     .sort((a, b) => b - a);
@@ -336,13 +354,16 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
   if (["season", "day", "form", "number"].includes(action)) {
     if (record.change) throw new ReportManagementError("Für diesen Report läuft bereits eine Änderung. Bitte die Aktion erneut am Ergebnispost öffnen.");
     checkChannelAccess(interaction, interaction.channel);
-    validateContext(context, settingsStore, record.guildId);
+    // A following click may still carry the previous custom ID until Discord applies update().
+    // Keep each private picker's latest selection before awaiting that network request.
+    const draft = correctionDraft(store, interaction, record, context);
+    validateContext(draft.context, settingsStore, record.guildId);
     if (action === "form") {
-      await interaction.showModal(correctionModal(interaction, record, roleId, context));
+      await interaction.showModal(correctionModal(interaction, record, roleId, draft.context));
       return;
     }
     if (action === "season" && interaction.values?.length === 1 && interaction.values[0] === "other") {
-      await interaction.showModal(new ModalBuilder().setCustomId(customId("number", record, interaction.user.id, context))
+      await interaction.showModal(new ModalBuilder().setCustomId(customId("number", record, interaction.user.id, draft.context))
         .setTitle("Andere Season auswählen").addLabelComponents(new LabelBuilder().setLabel("Season")
           .setTextInputComponent(new TextInputBuilder().setCustomId("season").setStyle(TextInputStyle.Short)
             .setRequired(true).setMaxLength(4).setPlaceholder("Season-Nummer von 1 bis 9999"))));
@@ -351,13 +372,14 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
     const value = action === "number" ? interaction.fields.getTextInputValue("season").trim()
       : interaction.values?.length === 1 ? interaction.values[0] : "";
     if (!/^[1-9]\d{0,3}$/.test(value)) throw new ReportManagementError("Bitte eine gültige Season bzw. einen Spieltag auswählen.");
-    const chosen = { ...context, [action === "day" ? "matchday" : "season"]: Number(value) };
+    const chosen = { ...draft.context, [action === "day" ? "matchday" : "season"]: Number(value) };
     if (action === "day") validateContext(chosen, settingsStore, record.guildId);
-    const { flags, ...prompt } = contextPrompt(interaction, record, store, settingsStore, chosen);
+    draft.context = selectedContext(chosen, activeSettings(settingsStore, record.guildId));
+    const { flags, ...prompt } = contextPrompt(interaction, record, store, settingsStore, draft.context);
     await interaction.update(prompt);
     return;
   }
-  if (action === "edit") await interaction.deferReply(privateReply);
+  if (action === "edit" && !interaction.isFromMessage?.()) await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
   const channel = await resolveChannel(interaction, record);
   const change = action === "edit" ? await correctionData(interaction, record, roleId, settingsStore, context) : { kind: "delete" };
@@ -365,8 +387,8 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
   authorize(interaction, store.get(id, record.guildId));
   const kind = await manager.apply(id, record.guildId, channel, interaction.client.user.id, change, revision);
   await interaction.editReply({ content: kind === "delete" ? "✅ Report und Suchtreffer wurden entfernt."
-    : "✅ Report korrigiert. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.",
-    components: [], allowedMentions: { parse: [] } });
+    : `✅ Report korrigiert: **Season ${change.target.season} · Spieltag ${change.target.matchday}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
+    components: [], embeds: [], allowedMentions: { parse: [] } });
 }
 
 module.exports = { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete, correctionModal };

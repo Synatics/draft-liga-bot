@@ -8,7 +8,7 @@ const { MatchStore, matchData, revisionOf } = require("./match-store");
 const { ReportManager } = require("./report-manager");
 const { ReportPublisher } = require("./report-publisher");
 const { createResultMessage } = require("./reports");
-const { resultMessages } = require("./search-commands");
+const { resultMessages, handleSearchCommand } = require("./search-commands");
 const { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete, correctionModal } = require("./report-management");
 
 const GUILD = "300000000000000001", CHANNEL = "400000000000000001", MESSAGE = "500000000000000001";
@@ -374,6 +374,78 @@ test("correction submission updates season, players, score and replay while keep
   assert.equal(f.edits[0].embeds[0].fields[0].value.includes("Lennart"), true);
   assert.match(f.edits[0].embeds[0].fields[2].value, /^\|\| .*\\\|\\\|.* \|\|$/);
   assert.deepEqual(f.edits[0].allowedMentions, { parse: [] });
+});
+
+test("changing day 1 to day 2 while swapping the winner updates the same post, disk and a fresh search", async (t) => {
+  const f = setup(t);
+  const command = await openCorrection(f, { matchday: 2 });
+  assert.match(command.modal.title, /ST2$/);
+  const submit = f.interaction({ customId: command.modal.custom_id, isFromMessage: () => true,
+    fields: f.fields({ winner: MAX, loser: JAN, score: "2-0", link: f.data.link }) });
+  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
+  assert.equal(submit.deferred, true);
+  assert.equal(submit.defer, undefined, "A modal opened from the picker updates that private message");
+  assert.match(submit.response.content, /Season 4 · Spieltag 2/);
+  assert.deepEqual(submit.response.embeds, []);
+  assert.deepEqual(submit.response.components, []);
+  assert.equal(f.message.embeds[0].author.name, "Season 4 · Spieltag 2");
+  assert.ok(f.message.embeds[0].fields[0].value.includes("Max"));
+  assert.ok(f.message.embeds[0].fields[1].value.includes("Jan"));
+  const restarted = new MatchStore(f.filePath);
+  assert.equal(restarted.get(f.record.id, GUILD).matchday, 2);
+  assert.equal(restarted.get(f.record.id, GUILD).publication.messageId, MESSAGE);
+  const dms = [];
+  const search = f.interaction({ user: { id: JAN, async send(payload) { dms.push(payload); } },
+    options: { getInteger: (name) => name === "season" ? 4 : null, getString: () => JAN } });
+  await handleSearchCommand(search, restarted);
+  assert.match(dms[0].content, /Spieltag 2/);
+  assert.ok(!dms[0].content.includes("Spieltag 1"));
+});
+
+test("a quick Continue click cannot restore the old day while Discord is updating the dropdown message", async (t) => {
+  const f = setup(t);
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  const message = { id: "700000000000000001", embeds: command.response.embeds };
+  let release;
+  const updating = new Promise((resolve) => { release = resolve; });
+  const selection = f.interaction({ targetMessage: undefined, message,
+    customId: rows(command.response)[1][0].custom_id, values: ["2"], async update() { await updating; } });
+  const changing = handleManagementComponent(selection, f.store, f.manager, ROLE, f.settings);
+  try {
+    const button = f.interaction({ targetMessage: undefined, message, customId: rows(command.response)[2][0].custom_id });
+    await handleManagementComponent(button, f.store, f.manager, ROLE, f.settings);
+    assert.match(button.modal.title, /ST2$/);
+    await handleManagementComponent(f.interaction({ customId: button.modal.custom_id,
+      fields: f.fields({ winner: MAX, loser: JAN, link: f.data.link }) }), f.store, f.manager, ROLE, f.settings);
+    assert.equal(f.message.embeds[0].author.name, "Season 4 · Spieltag 2");
+    assert.equal(new MatchStore(f.filePath).get(f.record.id, GUILD).matchday, 2);
+  } finally {
+    release();
+    await changing;
+  }
+});
+
+test("rapid season and day selections are combined without mixing separate private correction forms", async (t) => {
+  const f = setup(t);
+  const command = f.interaction();
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  const message = { id: "700000000000000001", embeds: command.response.embeds };
+  await handleManagementComponent(f.interaction({ targetMessage: undefined, message,
+    customId: rows(command.response)[1][0].custom_id, values: ["2"] }), f.store, f.manager, ROLE, f.settings);
+  const season = f.interaction({ targetMessage: undefined, message,
+    customId: rows(command.response)[0][0].custom_id, values: ["other"] });
+  await handleManagementComponent(season, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(f.interaction({ targetMessage: undefined, message, customId: season.modal.custom_id,
+    fields: { getTextInputValue: () => "5" } }), f.store, f.manager, ROLE, f.settings);
+  const button = f.interaction({ targetMessage: undefined, message, customId: rows(command.response)[2][0].custom_id });
+  await handleManagementComponent(button, f.store, f.manager, ROLE, f.settings);
+  assert.match(button.modal.title, /S5 · ST2$/);
+  const separate = f.interaction({ targetMessage: undefined, message: { ...message, id: "700000000000000002" },
+    customId: rows(command.response)[2][0].custom_id });
+  await handleManagementComponent(separate, f.store, f.manager, ROLE, f.settings);
+  assert.match(separate.modal.title, /S4 · ST1$/);
+  assert.equal(f.current().matchday, 1, "Only submitting the final modal can change the archived day");
 });
 
 test("historical participants remain selectable without the role; newly selected people must still have it", async (t) => {
