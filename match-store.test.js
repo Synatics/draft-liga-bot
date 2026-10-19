@@ -43,10 +43,62 @@ test("match archive survives restarts and stores only search metadata, separated
 
 test("repeated reports do not duplicate an archived replay, while separate matchdays remain distinct", (t) => {
   const { store, filePath } = temporaryStore(t);
-  store.add(record());
-  store.add(record({ players: [...record().players].reverse(), link: ` ${record().link} ` }));
+  const first = store.add(record());
+  const duplicate = store.add(record({ players: [...record().players].reverse(), link: ` ${record().link} ` }));
+  assert.equal(duplicate.id, first.id);
+  assert.deepEqual(first.publication, { status: "pending" });
   store.add(record({ matchday: 2 }));
   assert.equal(new MatchStore(filePath).list(GUILD).length, 2);
+});
+
+test("publication reservations and message IDs survive restarts without resetting completed reports", (t) => {
+  const { store, filePath } = temporaryStore(t);
+  const match = store.add(record());
+  store.setPublication(match.id, { status: "sending" });
+  const restarted = new MatchStore(filePath);
+  assert.equal(restarted.add(record()).publication.status, "sending");
+  restarted.setPublication(match.id, { status: "published", messageId: "500000000000000001" });
+  const published = new MatchStore(filePath).add(record());
+  assert.deepEqual(published.publication, { status: "published", messageId: "500000000000000001" });
+  assert.throws(() => restarted.setPublication(match.id, { status: "pending" }), /Ungültiger Wechsel/);
+});
+
+test("older archives stay readable and duplicates remain recognizable without inventing a posting status", (t) => {
+  const { filePath } = temporaryStore(t);
+  const original = JSON.stringify({ version: 1, matches: [record()] });
+  writeFileSync(filePath, original);
+  const restarted = new MatchStore(filePath);
+  const duplicate = restarted.add(record({ players: [...record().players].reverse() }));
+  assert.equal(duplicate.id, undefined);
+  assert.equal(duplicate.publication, undefined);
+  assert.equal(readFileSync(filePath, "utf8"), original);
+  restarted.add(record({ matchday: 2 }));
+  assert.equal(new MatchStore(filePath).list(GUILD).length, 2);
+});
+
+test("failed publication writes leave the previous on-disk and in-memory states intact", (t) => {
+  const { store, filePath } = temporaryStore(t);
+  const match = store.add(record());
+  store.filePath = join(filePath, "not-a-directory.json");
+  assert.throws(() => store.setPublication(match.id, { status: "sending" }), /nicht gespeichert/);
+  assert.equal(store.add(record()).publication.status, "pending");
+  assert.equal(new MatchStore(filePath).add(record()).publication.status, "pending");
+});
+
+test("partial or invalid publication metadata is rejected instead of silently allowing another post", (t) => {
+  const { filePath } = temporaryStore(t);
+  const id = "a".repeat(24);
+  for (const metadata of [
+    { id }, { publication: { status: "pending" } },
+    { id, publication: { status: "unknown" } },
+    { id, publication: { status: "published" } },
+    { id, publication: { status: "sending", messageId: "500000000000000001" } },
+  ]) {
+    const content = JSON.stringify({ version: 1, matches: [record(metadata)] });
+    writeFileSync(filePath, content);
+    assert.throws(() => new MatchStore(filePath), /nicht gelesen/);
+    assert.equal(readFileSync(filePath, "utf8"), content);
+  }
 });
 
 test("archive write errors preserve all previous matches in memory and on disk", (t) => {

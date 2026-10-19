@@ -80,6 +80,7 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "dotenv") return { config() {} };
       if (name === "node:path") return require(name);
       if (name === "./reports") return reports;
+      if (name === "./report-publisher") return require(name);
       if (name === "./match-store") return {
         ...require(name),
         MatchStore: class extends MatchStore {
@@ -140,7 +141,10 @@ test("league settings, reports and role changes work together without exposing r
         { component: { type: discord.ComponentType.TextInput, customId: "score", value: "2-0" } },
         { component: { type: discord.ComponentType.TextInput, customId: "link", value: "https://example.org/replay" } },
       ]),
-      channel: { async send(message) { posts.push(message); } },
+      channel: { async send(message) {
+        posts.push(message);
+        return { id: String(500000000000000000n + BigInt(posts.length)) };
+      } },
       async deferReply(payload) {
         sequence.push("defer");
         assert.ok(payload.flags.includes(discord.MessageFlags.Ephemeral));
@@ -157,6 +161,12 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(valid.response.content, /erfolgreich/);
   assert.equal(posts[0].embeds[0].toJSON().author.name, "Season 3 · Spieltag 7");
   const archivePath = join(directory, "matches.json");
+  assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
+  const duplicate = submission();
+  await handle(duplicate);
+  assert.equal(posts.length, 1, "Repeated submissions must not create a second public post");
+  assert.match(duplicate.response.content, /bereits gepostet/);
+  assert.match(duplicate.response.content, /500000000000000001/);
   assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
 
   function adminCommand(subcommand, values = {}, allowed = true) {
@@ -254,7 +264,7 @@ test("league settings, reports and role changes work together without exposing r
   failSaving = false;
 
   const failedPost = submission(4);
-  failedPost.channel.send = async () => { throw new Error("Missing Permissions"); };
+  failedPost.channel.send = async () => { throw Object.assign(new Error("Missing Permissions"), { status: 403, code: 50013 }); };
   await handle(failedPost);
   assert.match(failedPost.response.content, /Replay ist für \/suchen gespeichert/);
   assert.equal(errors.length, 1);
@@ -262,4 +272,7 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(new MatchStore(archivePath).list(guild.id).length, 3);
   await handle(submission(4));
   assert.equal(new MatchStore(archivePath).list(guild.id).length, 3, "Retrying a failed public post must not duplicate search results");
+  assert.equal(posts.length, 3);
+  await handle(submission(4));
+  assert.equal(posts.length, 3, "A successful retry must be protected from subsequent duplicate posts");
 });

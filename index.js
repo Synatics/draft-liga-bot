@@ -20,12 +20,14 @@ const {
 const { LeagueSettingsError, LeagueSettingsStore, settingsFilePath } = require("./league-settings");
 const { leagueCommand, handleLeagueCommand } = require("./league-commands");
 const { MatchStore, MatchStoreError, normalizeReplayLink } = require("./match-store");
+const { ReportPublisher } = require("./report-publisher");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 
 const participantRoleId = process.env.PARTICIPANT_ROLE_ID?.trim();
 const settingsPath = settingsFilePath(process.env);
 const settingsStore = new LeagueSettingsStore(settingsPath);
 const matchStore = new MatchStore(join(dirname(settingsPath), "matches.json"));
+const reportPublisher = new ReportPublisher(matchStore);
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
@@ -131,16 +133,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
       interaction.customId, interaction.fields, settingsStore.get(interaction.guild.id)
     );
 
-    // Persist first: a storage failure must never produce an unsearchable public report.
-    matchStore.add({ guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link });
-    try {
-      await interaction.channel.send(createResultMessage(winner, loser, score, link, context));
-    } catch (error) {
-      console.error("Fehler beim Posten des gespeicherten Reports:", error);
-      await interaction.editReply({ content: "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut." });
-      return;
-    }
-    await interaction.editReply({ content: "✅ Ergebnis erfolgreich gepostet!" });
+    const publication = await reportPublisher.publish(
+      { guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link },
+      interaction.channel,
+      createResultMessage(winner, loser, score, link, context)
+    );
+    if (publication.error) console.error(
+      publication.status === "published-unconfirmed" ? "Fehler beim Speichern des Versandstatus:" : "Fehler beim Posten des gespeicherten Reports:",
+      publication.error
+    );
+    if (publication.storageError) console.error("Fehler beim Speichern des Versandstatus:", publication.storageError);
+    const messageLink = publication.messageId
+      ? `https://discord.com/channels/${interaction.guild.id}/${interaction.channelId}/${publication.messageId}` : null;
+    const replies = {
+      published: "✅ Ergebnis erfolgreich gepostet!",
+      duplicate: `ℹ️ Dieses Match wurde bereits gepostet: <${messageLink}>`,
+      "in-progress": "ℹ️ Dieses Match wird gerade gepostet. Bitte warte kurz.",
+      legacy: "ℹ️ Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
+      failed: "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
+      "failed-unconfirmed": "❌ Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
+      uncertain: "⚠️ Bei diesem Match ist unklar, ob Discord den Ergebnis-Post bereits erhalten hat. Damit kein doppelter Post entsteht, wird es nicht erneut gesendet. Bitte prüfe den Kanal und lass bei Bedarf den Versandstatus im Archiv prüfen.",
+      "published-unconfirmed": `⚠️ Das Ergebnis wurde gepostet: <${messageLink}>. Der Versandstatus konnte aber nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher.`,
+    };
+    await interaction.editReply({
+      content: replies[publication.status],
+      flags: [MessageFlags.SuppressEmbeds],
+      allowedMentions: { parse: [] },
+    });
   } catch (error) {
     if (isSearchAutocomplete) {
       console.error("Fehler bei den Suchvorschlägen:", error);

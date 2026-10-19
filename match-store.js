@@ -1,8 +1,17 @@
 const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = require("node:fs");
 const { dirname } = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { randomBytes, randomUUID } = require("node:crypto");
 
 class MatchStoreError extends Error {}
+
+const isSnowflake = (value) => typeof value === "string" && /^\d{17,20}$/.test(value);
+
+function validatePublication(publication) {
+  if (!publication || !["pending", "sending", "published"].includes(publication.status) ||
+      (publication.status === "published" ? !isSnowflake(publication.messageId) : publication.messageId !== undefined)) {
+    throw new MatchStoreError("Ungültiger Veröffentlichungsstatus im Replay-Archiv.");
+  }
+}
 
 function normalizeReplayLink(value) {
   try {
@@ -17,17 +26,23 @@ function normalizeReplayLink(value) {
 }
 
 function validateMatch(match) {
-  const snowflake = (value) => typeof value === "string" && /^\d{17,20}$/.test(value);
-  if (!match || !snowflake(match.guildId) || !snowflake(match.channelId) ||
+  if (!match || !isSnowflake(match.guildId) || !isSnowflake(match.channelId) ||
       !Number.isInteger(match.season) || match.season < 1 || match.season > 9999 ||
       !Number.isInteger(match.matchday) || match.matchday < 1 || match.matchday > 25 ||
       !Array.isArray(match.players) || match.players.length !== 2 ||
-      match.players.some((player) => !player || !snowflake(player.id) ||
+      match.players.some((player) => !player || !isSnowflake(player.id) ||
         typeof player.name !== "string" || !player.name.trim() || player.name.length > 100) ||
       match.players[0].id === match.players[1].id) {
     throw new MatchStoreError("Ungültige Daten für das Replay-Archiv.");
   }
   normalizeReplayLink(match.link);
+  // Older archives have neither field. Partial metadata must not silently enable a retry.
+  if (match.id !== undefined || match.publication !== undefined) {
+    if (typeof match.id !== "string" || !/^[a-f0-9]{24}$/.test(match.id)) {
+      throw new MatchStoreError("Ungültige Match-ID im Replay-Archiv.");
+    }
+    validatePublication(match.publication);
+  }
 }
 
 class MatchStore {
@@ -37,7 +52,12 @@ class MatchStore {
     try {
       const data = JSON.parse(readFileSync(filePath, "utf8"));
       if (data.version !== 1 || !Array.isArray(data.matches)) throw new Error("Ungültiges Dateiformat");
-      for (const match of data.matches) validateMatch(match);
+      const ids = new Set();
+      for (const match of data.matches) {
+        validateMatch(match);
+        if (match.id && ids.has(match.id)) throw new Error("Doppelte Match-ID");
+        if (match.id) ids.add(match.id);
+      }
       this.matches = data.matches;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -63,11 +83,32 @@ class MatchStore {
       players: match.players.map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)),
       link: normalizeReplayLink(match.link),
     };
-    const duplicate = this.matches.some((entry) => entry.guildId === record.guildId &&
+    const duplicate = this.matches.find((entry) => entry.guildId === record.guildId &&
       entry.channelId === record.channelId && entry.season === record.season &&
       entry.matchday === record.matchday && entry.link === record.link &&
-      entry.players.every((player, index) => player.id === record.players[index].id));
-    if (!duplicate) this.save([...this.matches, record]);
+      entry.players.map((player) => player.id).sort().every((id, index) => id === record.players[index].id));
+    if (duplicate) return structuredClone(duplicate);
+    do {
+      record.id = randomBytes(12).toString("hex");
+    } while (this.matches.some((entry) => entry.id === record.id));
+    record.publication = { status: "pending" };
+    this.save([...this.matches, record]);
+    return structuredClone(record);
+  }
+
+  setPublication(id, publication) {
+    validatePublication(publication);
+    const index = typeof id === "string" ? this.matches.findIndex((match) => match.id === id) : -1;
+    if (index < 0) throw new MatchStoreError("Das Match wurde im Replay-Archiv nicht gefunden.");
+    const previous = this.matches[index].publication.status;
+    const next = publication.status;
+    if (!((previous === "pending" && next === "sending") ||
+        (previous === "sending" && ["pending", "published"].includes(next)))) {
+      throw new MatchStoreError("Ungültiger Wechsel des Veröffentlichungsstatus.");
+    }
+    const matches = [...this.matches];
+    matches[index] = { ...matches[index], publication: { ...publication } };
+    this.save(matches);
   }
 
   save(matches) {

@@ -12,6 +12,7 @@ Der Bot verwendet Node.js, CommonJS und discord.js 14. Liga-Einstellungen und Re
 - **Automatische Spieltage:** Eine Season wird einmal mit Startmontag und Anzahl der Spieltage eingerichtet. Der aktuelle Spieltag folgt dem Kalender in `Europe/Berlin`.
 - **Replay-Suche:** `/suchen` filtert nach Season, Spieler und optional Spieltag. Die Treffer kommen als normale DMs mit Spieltag, Teilnehmern und Replay-Link.
 - **Dauerhafte Speicherung:** Konfiguration und Archiv bleiben bei Neustarts erhalten, sofern das Datenverzeichnis auf persistentem Speicher liegt.
+- **Duplikatschutz:** Wiederholte und gleichzeitige Meldungen desselben Matches erzeugen keinen weiteren öffentlichen Post. Veröffentlichte Nachrichten werden im Archiv referenziert.
 
 ## Voraussetzungen
 
@@ -166,6 +167,8 @@ Beim Absenden werden die ausgewählten Mitglieder erneut geladen und auf Serverz
 
 Der Ergebnispost wird im **Kanal des Befehlsaufrufs** veröffentlicht. Die Bestätigung ist nur für die meldende Person sichtbar. Die öffentliche Nachricht enthält Season, Spieltag, beide Namen und Replay-Link; Gewinner, Verlierer und Score sind mit Discord-Spoilern markiert.
 
+Wurde dasselbe Match bereits veröffentlicht, erhält die meldende Person stattdessen einen Link zum bestehenden Ergebnispost. Während eines laufenden Versands erscheint ein entsprechender Hinweis. Ein anderer Score oder vertauschte Gewinner- und Verliererauswahl umgehen den Duplikatschutz nicht.
+
 ### `/liga season` und `/liga status`
 
 ```text
@@ -239,18 +242,50 @@ Die Auswahl des Datenverzeichnisses erfolgt in dieser Reihenfolge:
 
 Ein Match enthält `guildId`, `channelId`, `season`, `matchday`, zwei `players` mit jeweils `id` und `name` sowie `link`. Die Spieler werden in einer stabilen Reihenfolge nach ID gespeichert, ohne Gewinner und Verlierer zu kennzeichnen. Der Score wird nicht im Archiv gespeichert.
 
+Neue Einträge enthalten zusätzlich eine zufällige, 24 Zeichen lange hexadezimale `id` und das Objekt `publication`. Darin werden `status` und bei bestätigter Veröffentlichung die Discord-`messageId` gespeichert. Die Formatversion bleibt 1; bestehende Einträge ohne diese Metadaten bleiben lesbar und durchsuchbar. Sie werden beim Laden nicht umgeschrieben und nicht erneut automatisch veröffentlicht, da ihr bisheriger Versandstatus unbekannt ist.
+
 Die Dateien werden beim Start eingelesen und im Arbeitsspeicher gehalten. Änderungen werden synchron in eine temporäre Datei geschrieben, die anschließend per Rename die bisherige JSON-Datei ersetzt. Beschädigte vorhandene Dateien führen zu einem Fehler statt zu einem stillen Zurücksetzen. Beim ersten Start wird ein leeres Replay-Archiv angelegt, wodurch auch die Schreibbarkeit des Verzeichnisses geprüft wird.
 
 ### Verhalten beim Melden und bei Fehlern
 
 1. Eingaben, ausgewählte Mitglieder und Season-Zuordnung werden geprüft.
-2. Die Replay-Metadaten werden gespeichert.
-3. Der Ergebnispost wird an Discord gesendet.
-4. Die meldende Person bekommt eine private Rückmeldung.
+2. Vorhandene Einträge mit derselben Server-ID, Kanal-ID, Season, Spieltag, denselben beiden Spieler-IDs und demselben normalisierten Replay-Link werden erkannt.
+3. Ein neues Match wird mit dem Status `pending` gespeichert. Bereits veröffentlichte, laufende oder ältere Einträge ohne Versandstatus werden nicht erneut gesendet.
+4. Vor dem Discord-Aufruf wird der Status `sending` dauerhaft gespeichert. Eine zusätzliche Sperre pro Match verhindert parallele Versandversuche im selben Prozess.
+5. Nach erfolgreicher Discord-Antwort werden Status `published` und Nachrichten-ID gespeichert.
+6. Die meldende Person bekommt eine private Rückmeldung.
 
-Schlägt das Speichern fehl, wird kein öffentlicher Ergebnispost gesendet. Schlägt erst das Posten bei Discord fehl, bleibt der Suchtreffer erhalten und der Bot meldet den Fehler.
+| Veröffentlichungsstatus | Bedeutung |
+| --- | --- |
+| `pending` | Noch kein Versand gestartet oder Discord hat den Versuch eindeutig abgelehnt; erneuter Versuch möglich |
+| `sending` | Versand läuft oder sein Ausgang ist nach Abbruch, Netzwerkfehler oder Speicherfehler unklar; kein automatischer erneuter Versand |
+| `published` | Discord hat den Post bestätigt und dessen Nachrichten-ID wurde gespeichert; weitere Meldungen verweisen auf den vorhandenen Post |
 
-Ein identisches Replay mit derselben Server-ID, Kanal-ID, Season, Spieltag und denselben beiden Spieler-IDs erzeugt keinen zweiten Archiv-Eintrag. Diese Erkennung verhindert **keine zusätzlichen öffentlichen Posts**, wenn derselbe Report erneut abgesendet wird.
+Schlägt das Speichern vor dem Versand fehl, wird kein öffentlicher Ergebnispost gesendet. Bei einer eindeutigen Discord-Ablehnung mit HTTP-Status 4xx, ausgenommen 408, wird der Eintrag wieder auf `pending` gesetzt. Nach Beheben der Ursache kann `/report` erneut abgesendet werden. Der Suchtreffer bleibt in beiden Fällen erhalten.
+
+Bei einem Timeout, einer unterbrochenen Verbindung oder einem Serverfehler könnte Discord den Post bereits angelegt haben. Auch ein Absturz zwischen Versand und Speicherung der Nachrichten-ID lässt sich nicht sicher von einem fehlgeschlagenen Versand unterscheiden. Deshalb bleibt `sending` gespeichert und der Bot blockiert weitere Versuche auch nach einem Neustart, statt einen doppelten Post zu riskieren. Die private Rückmeldung erklärt diesen Fall. Dasselbe gilt, wenn nach einer eindeutigen Ablehnung der Status nicht zurückgespeichert werden konnte.
+
+Zusätzlich nutzt der Discord-Aufruf die Match-ID als `nonce` mit `enforceNonce`. Discord kann dadurch wiederholte API-Aufrufe innerhalb der letzten Minuten derselben Nachricht zuordnen. Der dauerhafte Schutz nach Neustarts beruht auf dem gespeicherten Status, nicht auf dieser zeitlich begrenzten API-Funktion. Siehe [Create Message](https://docs.discord.com/developers/resources/message#create-message).
+
+Ein gespeicherter Treffer ist weiterhin unabhängig vom Versandstatus über `/suchen` auffindbar. Bereits vorhandene doppelte Discord-Posts werden durch das Update nicht gelöscht.
+
+### Unklaren Versandstatus manuell prüfen
+
+Dieser Sonderfall erfordert eine Prüfung durch die Person, die den Bot betreibt:
+
+1. Den Bot stoppen und eine Sicherung von `matches.json` anlegen.
+2. Den betroffenen Eintrag über Season, Spieltag, Teilnehmer und Replay-Link zuordnen und im betreffenden Discord-Kanal prüfen, ob der Ergebnispost vorhanden ist.
+3. Ist der Post vorhanden, dessen Nachrichten-ID in `publication.messageId` eintragen und `publication.status` auf `published` setzen.
+4. Ist sicher kein Post vorhanden, `publication` auf `{ "status": "pending" }` setzen und die vorhandene Match-`id` beibehalten. Danach darf der Report erneut abgesendet werden.
+5. Den Bot wieder starten.
+
+Bei alten Einträgen ohne Veröffentlichungsmetadaten kann der Bot keinen vorhandenen Post-Link ermitteln; ein automatisches Einlesen alter Discord-Nachrichten findet nicht statt. Soll ein solcher Eintrag nach manueller Prüfung freigegeben oder einem vorhandenen Post zugeordnet werden, muss zusätzlich eine neue `id` eingetragen werden. Eine passende ID lässt sich mit folgendem Befehl erzeugen:
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(12).toString('hex'))"
+```
+
+Anschließend `publication` wie oben beschrieben auf `pending` bzw. `published` mit `messageId` setzen. Diese Änderung ebenfalls nur bei gestopptem Bot und nach Sicherung vornehmen.
 
 ### Grenzen und Betriebshinweise
 
@@ -302,12 +337,13 @@ npm test
 
 Die Tests verwenden den integrierten Node.js-Test-Runner `node:test`, echte discord.js-Komponenten, simulierte Discord-Interaktionen und temporäre Dateien. Sie brauchen weder Bot-Token noch Discord-Verbindung und versenden keine Nachrichten.
 
-Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
+Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
 
 | Datei | Aufgabe |
 | --- | --- |
 | [`index.js`](index.js) | Umgebungsvariablen laden, Client starten, Befehle registrieren und Interaktionen verteilen |
 | [`reports.js`](reports.js) | Teilnehmerauswahl, Modal, Validierung und Ergebnis-Embed |
+| [`report-publisher.js`](report-publisher.js) | Persistenter Duplikatschutz und Versand von Ergebnisposts |
 | [`league-commands.js`](league-commands.js) | `/liga`-Definition und Verarbeitung |
 | [`league-settings.js`](league-settings.js) | Season-Konfiguration, Kalenderberechnung und Datenpfad |
 | [`match-store.js`](match-store.js) | Replay-Archiv, URL-Validierung und Duplikaterkennung |
@@ -332,4 +368,7 @@ Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerf
 | Ergebnispost scheitert | Kanalrechte des Bots prüfen, insbesondere Kanal anzeigen, Nachrichten senden und Links einbetten; gespeichertes Replay bleibt im Archiv |
 | Railway meldet einen fehlenden oder ungültigen Datenpfad | Volume mit dem richtigen Service verbinden; `DATA_DIR` weglassen oder auf einen Unterordner des Mount-Pfads setzen |
 | Vorhandene JSON-Datei kann nicht gelesen werden | Bot stoppen, Fehlermeldung und Datei prüfen bzw. Backup wiederherstellen; die Datei wird absichtlich nicht automatisch überschrieben |
-| Doppelte Ergebnisposts | Prüfen, ob lokaler Bot und Hosting oder mehrere Prozesse mit demselben Token gleichzeitig laufen |
+| Report wird als bereits veröffentlicht erkannt | Bestehenden Post über den angebotenen Link öffnen; erneutes Absenden desselben Matches erstellt keinen zweiten Post |
+| Report meldet einen unklaren Versandstatus | Kanal und Archiv wie unter „Unklaren Versandstatus manuell prüfen“ kontrollieren; ein Neustart hebt die Sperre absichtlich nicht auf |
+| Alter Report wird nicht erneut gepostet | Bestands-Einträge haben keinen Veröffentlichungsstatus und werden vorsichtshalber nicht erneut gesendet |
+| Trotzdem doppelte Ergebnisposts | Prüfen, ob eine ältere Bot-Version läuft, Angaben wie Kanal oder Spieltag abweichen oder mehrere Prozesse mit demselben Token bzw. Datenverzeichnis laufen |
