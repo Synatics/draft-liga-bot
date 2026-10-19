@@ -61,6 +61,15 @@ function validateSettings(settings) {
   }
 }
 
+function parseSettingsDocument(text) {
+  const data = JSON.parse(text);
+  if (!data || data.version !== 1 || !data.guilds || typeof data.guilds !== "object" || Array.isArray(data.guilds)) {
+    throw new Error("Ungültiges Dateiformat der Liga-Einstellungen");
+  }
+  for (const settings of Object.values(data.guilds)) validateSettings(settings);
+  return data;
+}
+
 function settingsFilePath(env = process.env) {
   if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
     throw new LeagueSettingsError(
@@ -83,11 +92,7 @@ class LeagueSettingsStore {
     this.now = now;
     this.guilds = {};
     try {
-      const data = JSON.parse(readFileSync(filePath, "utf8"));
-      if (data.version !== 1 || !data.guilds || typeof data.guilds !== "object" || Array.isArray(data.guilds)) {
-        throw new Error("Ungültiges Dateiformat");
-      }
-      for (const settings of Object.values(data.guilds)) validateSettings(settings);
+      const data = parseSettingsDocument(readFileSync(filePath, "utf8"));
       this.guilds = data.guilds;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -139,4 +144,5 @@ class LeagueSettingsStore {
 module.exports = {
   LeagueSettingsError, LeagueSettingsStore, settingsFilePath, validateSettings,
   normalizeStartDate, currentMatchday,
+  parseSettingsDocument,
 };

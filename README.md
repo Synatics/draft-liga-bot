@@ -12,6 +12,7 @@ Der Bot verwendet Node.js, CommonJS und discord.js 14. Liga-Einstellungen und Re
 - **Automatische Spieltage:** Eine Season wird einmal mit Startmontag und Anzahl der Spieltage eingerichtet. Der aktuelle Spieltag folgt dem Kalender in `Europe/Berlin`.
 - **Replay-Suche:** `/suchen` filtert nach Season, Spieler und optional Spieltag. Die Treffer kommen als normale DMs mit Spieltag, Teilnehmern und Replay-Link.
 - **Dauerhafte Speicherung:** Konfiguration und Archiv bleiben bei Neustarts erhalten, sofern das Datenverzeichnis auf persistentem Speicher liegt.
+- **Automatische Backups:** Der Bot sichert beide Datendateien täglich und bewahrt die letzten 14 Sicherungen auf. Ein Terminal-Befehl ermöglicht zusätzliche manuelle Sicherungen.
 - **Duplikatschutz:** Wiederholte und gleichzeitige Meldungen desselben Matches erzeugen keinen weiteren öffentlichen Post. Veröffentlichte Nachrichten werden im Archiv referenziert.
 
 ## Voraussetzungen
@@ -314,7 +315,54 @@ Anschließend `publication` wie oben beschrieben auf `pending` bzw. `published` 
 
 ### Backups und Wiederherstellung
 
-Für eine konsistente manuelle Sicherung den Bot stoppen und beide JSON-Dateien zusammen kopieren. Zur Wiederherstellung den Bot stoppen, die Dateien im Datenverzeichnis ersetzen und anschließend neu starten. Ein persistentes Volume schützt vor dem Verlust bei Container-Neustarts; zusätzliche Backups schützen die Daten auch bei versehentlichem Löschen oder beschädigten Dateien.
+#### Automatische Sicherungen
+
+Der Bot prüft beim Start und anschließend stündlich, ob für den aktuellen **UTC-Kalendertag** bereits eine vollständige, lesbare Sicherung existiert. Falls nicht, erstellt er eine. Voraussetzung ist, dass beide Datendateien existieren; bei einer frischen Installation zuerst `/liga season` einrichten. Danach erfolgt die erste Sicherung spätestens bei der nächsten stündlichen Prüfung oder beim nächsten Start.
+
+Die Kopien liegen unter `backups/` im selben Datenverzeichnis wie die Originaldateien. Auf Railway mit dem Mount-Pfad `/data` sieht das beispielsweise so aus:
+
+```text
+/data/
+  league-settings.json
+  matches.json
+  backups/
+    backup-2026-10-19T08-00-00-000Z-<zufällige-id>/
+      league-settings.json
+      matches.json
+```
+
+Jede Sicherung enthält nur diese beiden JSON-Dateien, einschließlich Match-IDs und Veröffentlichungsstatus. Bot-Token, `.env`, Quellcode und versendete Discord-Nachrichten werden nicht gesichert. Die Originaldateien werden vor dem Kopieren mit denselben Prüfungen wie beim Bot-Start validiert. Das Lesen und Schreiben erfolgt synchron im laufenden Bot-Prozess, sodass kein Report die Dateien zwischen den beiden Lesezugriffen ändern kann.
+
+Erst nach vollständigem Schreiben wird der temporäre Ordner per Rename als fertiges Backup freigegeben. Danach werden die ältesten Sicherungen entfernt, bis **14 Kopien** übrig sind. Manuell ausgelöste Sicherungen zählen dazu. Unbekannte Ordner, zusätzliche Dateien und symbolische Links werden nicht automatisch gelöscht; beim Aufräumen können deshalb mehr Kopien übrig bleiben. Abgebrochene temporäre Ordner gelten nicht als Sicherungen.
+
+Bei einem Backup-Fehler bleiben vorhandene Sicherungen und die laufenden Bot-Funktionen erhalten. Der Fehler erscheint im Terminal; die nächste stündliche Prüfung versucht es erneut. Bei fehlendem Speicherplatz oder wiederholten Fehlern den Datenordner kontrollieren. Die Sicherung wird nicht automatisch wiederhergestellt.
+
+#### Zusätzliche manuelle Sicherung
+
+Für eine zusätzliche Sicherung, etwa vor einem Update oder einer Datenkorrektur, **den Bot stoppen** und im Projektverzeichnis ausführen:
+
+```sh
+npm run backup
+```
+
+Der Befehl verwendet dieselbe `.env` und Datenpfad-Auswahl wie `npm start`, erstellt auch bei vorhandenem Tagesbackup eine neue Kopie und gibt deren Pfad aus. Er startet keinen Discord-Client und benötigt keine Discord-Verbindung. Bei ungültigen oder fehlenden Dateien endet er mit Exit-Code 1 und entfernt keine älteren Sicherungen. Ein fehlgeschlagenes Aufräumen wird als Warnung ausgegeben; die neue Kopie bleibt gültig.
+
+Der Befehl muss dort laufen, wo die tatsächlichen Daten liegen. Ein lokales `npm run backup` sichert lokale Dateien und hat keinen Zugriff auf das Railway-Volume. Für eine konsistente Sicherung mit einem separaten Prozess darf währenddessen kein Bot in dieselben Dateien schreiben.
+
+#### Dateien wiederherstellen
+
+1. Den Bot stoppen und die aktuellen Datendateien, soweit noch vorhanden, außerhalb des Backup-Ordners separat aufbewahren.
+2. Einen vollständigen Backup-Ordner anhand des Zeitstempels auswählen. **Beide** JSON-Dateien aus genau dieser Sicherung verwenden.
+3. Dessen `league-settings.json` und `matches.json` in das aktive Datenverzeichnis kopieren und die dortigen Dateien ersetzen. Auf Railway ist dies standardmäßig `/data`, lokal `data/`; bei `DATA_DIR` dessen tatsächlichen Pfad verwenden.
+4. Den Bot starten und `/liga status` sowie `/suchen` prüfen. Ist eine Sicherung ungültig, weist der Bot sie beim Laden zurück.
+
+Eine Wiederherstellung setzt Season-Einstellungen, Archiv und gespeicherten Versandstatus auf den Zeitpunkt der Sicherung zurück. Neuere Reports fehlen danach im Archiv. Bereits veröffentlichte Discord-Posts und versendete DMs bleiben erhalten. Vor dem erneuten Melden jüngerer Matches den Ergebniskanal prüfen: Für Posts nach dem Sicherungszeitpunkt kann der zurückgesetzte Duplikatschutz keinen vorhandenen Post erkennen. Gesicherte Einträge mit dem Status `sending` weiterhin wie unter „Unklaren Versandstatus manuell prüfen“ behandeln.
+
+#### Zusätzlich Railway-Backups aktivieren
+
+Die eingebauten Kopien schützen vor beschädigten oder versehentlich geänderten Datendateien. Da sie im selben Datenverzeichnis liegen, schützen sie **nicht vor dem Verlust oder Löschen des gesamten Volumes**. Dafür zusätzlich eine Sicherung außerhalb des laufenden Volumes vorsehen, z. B. Railway-Volume-Backups und gelegentliche Downloads auf einen anderen Speicher.
+
+Im Railway-Service unter **Backups** einen täglichen und optional zusätzlich einen wöchentlichen bzw. monatlichen Zeitplan aktivieren. Railway bietet dort auch manuelle Sicherungen und die Wiederherstellung über **Restore** an. Die Wiederherstellung wird als Änderung vorbereitet und erst nach Prüfung mit **Deploy** angewendet. Der Bot-Code schaltet diese Hosting-Funktion nicht selbst ein. Die aktuelle Aufbewahrung, Grenzen und Kosten stehen in der [Railway-Dokumentation zu Volume-Backups](https://docs.railway.com/volumes/backups). Railway weist darauf hin, dass ein Wipe des Volumes auch dessen Plattform-Backups löscht; eine separat heruntergeladene Kopie schützt zusätzlich vor diesem Fall.
 
 ## Deployment auf Railway
 
@@ -341,7 +389,7 @@ Falls `DATA_DIR` gesetzt wird, muss das auf Railway ein Pfad **innerhalb des zug
 
 Wenn Railway erkannt wird, aber kein Volume konfiguriert ist oder `DATA_DIR` außerhalb liegt, beendet sich der Bot mit einer Fehlermeldung. Das Volume ist erst zur Laufzeit verfügbar: Der Bot wird über den Start Command gestartet, nicht als Build- oder Pre-Deploy-Schritt.
 
-Den Service mit einer Instanz betreiben und für das Volume Backups einrichten. Lokaler Testbetrieb und Railway besitzen getrennte Dateien; eine lokal eingerichtete Season wird nicht automatisch nach Railway übertragen.
+Den Service mit einer Instanz betreiben und die zusätzlichen Railway-Backups wie oben beschrieben aktivieren. Die eingebauten täglichen Kopien landen automatisch unter `/data/backups/` bzw. im gewählten `DATA_DIR`. Lokaler Testbetrieb und Railway besitzen getrennte Dateien; eine lokal eingerichtete Season wird nicht automatisch nach Railway übertragen.
 
 Weitere Informationen: [Railway Volumes](https://docs.railway.com/volumes) und [Volume-Backups](https://docs.railway.com/volumes/backups).
 
@@ -354,7 +402,7 @@ npm test
 
 Die Tests verwenden den integrierten Node.js-Test-Runner `node:test`, echte discord.js-Komponenten, simulierte Discord-Interaktionen und temporäre Dateien. Sie brauchen weder Bot-Token noch Discord-Verbindung und versenden keine Nachrichten.
 
-Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
+Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, doppelte und gleichzeitige Reports, Neustarts nach Versandfehlern, ältere Archivdateien, tägliche Backups, Aufbewahrung und Wiederherstellung, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
 
 | Datei | Aufgabe |
 | --- | --- |
@@ -364,6 +412,8 @@ Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerf
 | [`league-commands.js`](league-commands.js) | `/liga`-Definition und Verarbeitung |
 | [`league-settings.js`](league-settings.js) | Season-Konfiguration, Kalenderberechnung und Datenpfad |
 | [`match-store.js`](match-store.js) | Replay-Archiv, URL-Validierung und Duplikaterkennung |
+| [`data-backups.js`](data-backups.js) | Tägliche Sicherungen, Aufbewahrung und Zeitsteuerung |
+| [`backup.js`](backup.js) | Zusätzliche manuelle Sicherung über `npm run backup` |
 | [`search-commands.js`](search-commands.js) | `/suchen`, Autocomplete, Zugriffsprüfung und DM-Versand |
 | `*.test.js` | Modul- und Integrationstests |
 
@@ -386,6 +436,8 @@ Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerf
 | Ergebnispost scheitert | Kanalrechte des Bots prüfen, insbesondere Kanal anzeigen, Nachrichten senden und Links einbetten; gespeichertes Replay bleibt im Archiv |
 | Railway meldet einen fehlenden oder ungültigen Datenpfad | Volume mit dem richtigen Service verbinden; `DATA_DIR` weglassen oder auf einen Unterordner des Mount-Pfads setzen |
 | Vorhandene JSON-Datei kann nicht gelesen werden | Bot stoppen, Fehlermeldung und Datei prüfen bzw. Backup wiederherstellen; die Datei wird absichtlich nicht automatisch überschrieben |
+| Datensicherung schlägt fehl | Nach einer frischen Installation zuerst `/liga season` einrichten; ansonsten beide Datendateien, Schreibrechte, freien Speicher und den Backup-Ordner prüfen; vorhandene Sicherungen bleiben erhalten |
+| Alte Sicherung konnte nicht entfernt werden | Dateirechte und unerwartete Dateien im genannten Ordner prüfen; die neue Sicherung ist angelegt, der Speicherbedarf kann aber weiter wachsen |
 | Report wird als bereits veröffentlicht erkannt | Bestehenden Post über den angebotenen Link öffnen; erneutes Absenden desselben Matches erstellt keinen zweiten Post |
 | Report meldet einen unklaren Versandstatus | Kanal und Archiv wie unter „Unklaren Versandstatus manuell prüfen“ kontrollieren; ein Neustart hebt die Sperre absichtlich nicht auf |
 | Alter Report wird nicht erneut gepostet | Bestands-Einträge haben keinen Veröffentlichungsstatus und werden vorsichtshalber nicht erneut gesendet |

@@ -81,6 +81,14 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "node:path") return require(name);
       if (name === "./reports") return reports;
       if (name === "./report-publisher") return require(name);
+      if (name === "./data-backups") return {
+        ...require(name),
+        startAutomaticBackups(backups) {
+          const timer = require(name).startAutomaticBackups(backups, { log() {}, error(...args) { errors.push(args); } });
+          t.after(() => clearInterval(timer));
+          return timer;
+        },
+      };
       if (name === "./match-store") return {
         ...require(name),
         MatchStore: class extends MatchStore {

@@ -21,6 +21,7 @@ const { LeagueSettingsError, LeagueSettingsStore, settingsFilePath } = require("
 const { leagueCommand, handleLeagueCommand } = require("./league-commands");
 const { MatchStore, MatchStoreError, normalizeReplayLink } = require("./match-store");
 const { ReportPublisher } = require("./report-publisher");
+const { DataBackups, startAutomaticBackups } = require("./data-backups");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 
 const participantRoleId = process.env.PARTICIPANT_ROLE_ID?.trim();
@@ -28,6 +29,7 @@ const settingsPath = settingsFilePath(process.env);
 const settingsStore = new LeagueSettingsStore(settingsPath);
 const matchStore = new MatchStore(join(dirname(settingsPath), "matches.json"));
 const reportPublisher = new ReportPublisher(matchStore);
+startAutomaticBackups(new DataBackups(settingsPath));
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });

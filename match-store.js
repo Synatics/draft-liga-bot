@@ -45,19 +45,24 @@ function validateMatch(match) {
   }
 }
 
+function parseMatchesDocument(text) {
+  const data = JSON.parse(text);
+  if (!data || data.version !== 1 || !Array.isArray(data.matches)) throw new Error("Ungültiges Dateiformat des Replay-Archivs");
+  const ids = new Set();
+  for (const match of data.matches) {
+    validateMatch(match);
+    if (match.id && ids.has(match.id)) throw new Error("Doppelte Match-ID");
+    if (match.id) ids.add(match.id);
+  }
+  return data;
+}
+
 class MatchStore {
   constructor(filePath) {
     this.filePath = filePath;
     this.matches = [];
     try {
-      const data = JSON.parse(readFileSync(filePath, "utf8"));
-      if (data.version !== 1 || !Array.isArray(data.matches)) throw new Error("Ungültiges Dateiformat");
-      const ids = new Set();
-      for (const match of data.matches) {
-        validateMatch(match);
-        if (match.id && ids.has(match.id)) throw new Error("Doppelte Match-ID");
-        if (match.id) ids.add(match.id);
-      }
+      const data = parseMatchesDocument(readFileSync(filePath, "utf8"));
       this.matches = data.matches;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -125,4 +130,4 @@ class MatchStore {
   }
 }
 
-module.exports = { MatchStore, MatchStoreError, normalizeReplayLink };
+module.exports = { MatchStore, MatchStoreError, normalizeReplayLink, parseMatchesDocument };

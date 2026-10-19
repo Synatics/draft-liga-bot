@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "backup": "node backup.js",
     "test": "node --test"
   },
   "keywords": [],
