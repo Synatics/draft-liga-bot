@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "matches": [
+    {
+      "guildId": "1455166384504967276",
+      "channelId": "1455497211231080479",
+      "season": 4,
+      "matchday": 1,
+      "players": [
+        {
+          "id": "285853327416229898",
+          "name": "Jan"
+        },
+        {
+          "id": "402831942996983809",
+          "name": "Lennart"
+        }
+      ],
+      "link": "https://docs.google.com/spreadsheets/d/1vYRwYg1zqlV2FxFZ7_0QI4MusL5HzDQZD6yqP-z9JJI/edit?gid=267804047#gid=267804047"
+    },
+    {
+      "guildId": "1455166384504967276",
+      "channelId": "1455497211231080479",
+      "season": 4,
+      "matchday": 2,
+      "players": [
+        {
+          "id": "285853327416229898",
+          "name": "Jan"
+        },
+        {
+          "id": "402831942996983809",
+          "name": "Lennart"
+        }
+      ],
+      "link": "https://docs.google.com/spreadsheets/d/1vYRwYg1zqlV2FxFZ7_0QI4MusL5HzDQZD6yqP-z9JJI/edit?gid=267804047#gid=267804047"
+    },
+    {
+      "guildId": "1455166384504967276",
+      "channelId": "1455497211231080479",
+      "season": 4,
+      "matchday": 1,
+      "players": [
+        {
+          "id": "285853327416229898",
+          "name": "Jan"
+        },
+        {
+          "id": "402831942996983809",
+          "name": "Lennart"
+        }
+      ],
+      "link": "https://www.youtube.com/",
+      "id": "e77f36fc4b5b081fe350bceb",
+      "publication": {
+        "status": "published",
+        "messageId": "1561677506136776725"
+      },
+      "revision": 1
+    }
+  ]
+}
