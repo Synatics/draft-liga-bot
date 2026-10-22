@@ -1,6 +1,6 @@
 const { AttachmentBuilder, ChannelType, MessageFlags, PermissionFlagsBits: P } = require("discord.js");
 const { LeagueSettingsError } = require("./league-settings");
-const { hasRole, isLeagueManager, currentMember } = require("./permissions");
+const { isParticipant, isLeagueManager, currentMember } = require("./permissions");
 
 const clean = (value) => String(value ?? "unbekannt").replace(/[\u0000-\u001f\u007f]/g,
   (character) => character === "\n" ? "\\n" : character === "\r" ? "\\r" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
@@ -67,7 +67,7 @@ async function handleAuditCommand(interaction, database, config) {
     throw new LeagueSettingsError("Bitte auf dem Liga-Server eine Season von 1 bis 9999 auswählen.");
   }
   const member = await currentMember(interaction);
-  if (!(config.participantRoleId !== interaction.guild.id && hasRole(member, config.participantRoleId)) &&
+  if (!isParticipant(interaction, config.participantRoleId, member) &&
       !isLeagueManager(interaction, config.managerRoleId, member)) {
     throw new LeagueSettingsError("Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen das Protokoll anfordern.");
   }

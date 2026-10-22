@@ -24,7 +24,7 @@ const { managementCommands, openManagement, handleManagementComponent, handleRem
 const { startAutomaticBackups } = require("./data-backups");
 const { SqliteBackups } = require("./database-backups");
 const { installReportButtons } = require("./report-buttons");
-const { actorOf } = require("./permissions");
+const { canReport, currentMember, actorOf } = require("./permissions");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 const { prepareStartup, connectDiscord, failStartup } = require("./startup");
 
@@ -125,6 +125,9 @@ async function startBot() {
         return;
       }
       checkParticipantRole(interaction.guild, participantRoleId);
+      if (!canReport(interaction, participantRoleId, managerRoleId)) {
+        throw new ReportError("Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen Ergebnisse melden.");
+      }
 
       if (isReportCommand) {
         if (!loadedGuilds.has(interaction.guild.id)) {
@@ -144,16 +147,19 @@ async function startBot() {
       const { winner, loser, players } = await resolveReportPlayers(
         interaction.guild, participantRoleId, interaction.fields
       );
+      const member = await currentMember(interaction);
+      if (!canReport(interaction, participantRoleId, managerRoleId, member)) {
+        throw new ReportError("Du darfst keine Ergebnisse mehr melden. Deine Teilnehmer- oder Verwaltungsberechtigung wurde inzwischen entzogen.");
+      }
       const score = interaction.fields.getTextInputValue("score");
       const link = normalizeReplayLink(interaction.fields.getTextInputValue("link"));
       // Read the season after the member lookups, in case an admin changed it meanwhile.
       const context = resolveReportContext(
         interaction.customId, interaction.fields, settingsStore.get(interaction.guild.id)
       );
-
       const publication = await reportPublisher.publish(
         { guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link,
-          reporter: actorOf(interaction), result: { winnerId: players[0].id, loserId: players[1].id, score } },
+          reporter: actorOf(interaction, member), result: { winnerId: players[0].id, loserId: players[1].id, score } },
         interaction.channel,
         createResultMessage(winner, loser, score, link, context)
       );

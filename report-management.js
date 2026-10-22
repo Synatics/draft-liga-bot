@@ -7,7 +7,7 @@ const { matchData, normalizeReplayLink, revisionOf } = require("./match-store");
 const { createResultMessage } = require("./reports");
 const { ReportManagementError } = require("./report-manager");
 const { playerChoices, resolvePlayer } = require("./search-commands");
-const { isLeagueManager, currentMember, actorOf } = require("./permissions");
+const { isParticipant, isLeagueManager, currentMember, actorOf } = require("./permissions");
 
 const managementCommands = [
   { name: "report-entfernen", description: "Gespeicherten Report finden und löschen, auch wenn der Post schon fehlt",
@@ -28,15 +28,15 @@ function maximumMatchday(record, settingsStore) {
   return settings?.season === record.season ? settings.matchdays : 25;
 }
 
-function canManage(interaction, record, action, managerRoleId, member = interaction.member) {
+function canManage(interaction, record, action, roleId, managerRoleId, member = interaction.member) {
   return interaction.guild?.id === record.guildId && (isLeagueManager(interaction, managerRoleId, member) ||
-    (action === "edit" && record.reporter?.id === interaction.user.id));
+    (action === "edit" && record.reporter?.id === interaction.user.id && isParticipant(interaction, roleId, member)));
 }
 
-function authorize(interaction, record, action, managerRoleId, member) {
-  if (!canManage(interaction, record, action, managerRoleId, member)) {
+function authorize(interaction, record, action, roleId, managerRoleId, member) {
+  if (!canManage(interaction, record, action, roleId, managerRoleId, member)) {
     throw new ReportManagementError(action === "edit"
-      ? "Nur die meldende Person, die Ligaverwaltung und Serververwalter dürfen diesen Report bearbeiten. Bei älteren Reports ist die meldende Person eventuell unbekannt."
+      ? "Nur die meldende Person mit aktueller Teilnehmerrolle, die Ligaverwaltung und Serververwalter dürfen diesen Report bearbeiten. Bei älteren Reports ist die meldende Person eventuell unbekannt."
       : "Nur die Ligaverwaltung und Serververwalter dürfen Reports löschen oder das Archiv bereinigen.");
   }
 }
@@ -133,7 +133,7 @@ function deletionPrompt(interaction, record) {
 async function removableMatches(interaction, store, managerRoleId) {
   if (!interaction.guild) return [];
   const matches = store.list(interaction.guild.id).filter((match) =>
-    match.publication?.status === "published" && canManage(interaction, match, "delete", managerRoleId));
+    match.publication?.status === "published" && canManage(interaction, match, "delete", undefined, managerRoleId));
   // Verify each result channel once, including current private-thread membership.
   const access = new Map(await Promise.all([...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
     try {
@@ -212,7 +212,7 @@ async function handleRemovalComponent(interaction, store, managerRoleId) {
     const selected = interaction.values?.length === 1 && /^([a-f0-9]{24}):([a-f0-9]{16})$/.exec(interaction.values[0]);
     if (!selected) throw new ReportManagementError("Bitte genau einen Report aus der Liste auswählen.");
     const record = store.get(selected[1], interaction.guild.id);
-    authorize(interaction, record, "delete", managerRoleId);
+    authorize(interaction, record, "delete", undefined, managerRoleId);
     if (revisionOf(record) !== selected[2]) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte /report-entfernen erneut verwenden.");
     await interaction.deferUpdate();
     await resolveChannel(interaction, record);
@@ -242,7 +242,7 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
   }
   const record = store.findByMessage(interaction.guild.id, interaction.channelId, message.id);
   if (record.id !== button[2]) throw new ReportManagementError("Dieser Button gehört zu einem anderen Report.");
-  authorize(interaction, record, action, managerRoleId);
+  authorize(interaction, record, action, roleId, managerRoleId);
   checkChannelAccess(interaction, interaction.channel);
   if (action === "delete") {
     await interaction.reply(deletionPrompt(interaction, record));
@@ -253,7 +253,7 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
     await interaction.deferReply(privateReply);
     const channel = await resolveChannel(interaction, record);
     const member = await currentMember(interaction);
-    authorize(interaction, store.get(record.id, record.guildId), action, managerRoleId, member);
+    authorize(interaction, store.get(record.id, record.guildId), action, roleId, managerRoleId, member);
     checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
     const kind = await manager.apply(record.id, record.guildId, channel, interaction.client.user.id,
       undefined, undefined, actorOf(interaction, member));
@@ -314,7 +314,7 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
     return;
   }
   const record = store.get(id, interaction.guild?.id);
-  authorize(interaction, record, action, managerRoleId);
+  authorize(interaction, record, action, roleId, managerRoleId);
   if (revisionOf(record) !== revision) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte die Aktion erneut öffnen.");
   if (action === "edit") await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
@@ -322,7 +322,7 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
   const change = action === "edit" ? await correctionData(interaction, record, roleId, settingsStore) : { kind: "delete" };
   // Recheck after asynchronous channel/member lookups; the store also verifies the revision.
   const member = await currentMember(interaction);
-  authorize(interaction, store.get(id, record.guildId), action, managerRoleId, member);
+  authorize(interaction, store.get(id, record.guildId), action, roleId, managerRoleId, member);
   checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
   const kind = await manager.apply(id, record.guildId, channel, interaction.client.user.id, change, revision, actorOf(interaction, member));
   await interaction.editReply({ content: kind === "delete" ? "✅ Report und Suchtreffer wurden entfernt."

@@ -14,6 +14,7 @@ const { installReportButtons } = require("./report-buttons");
 
 const GUILD = "300000000000000001", CHANNEL = "400000000000000001", MESSAGE = "500000000000000001";
 const JAN = "200000000000000001", MAX = "200000000000000002", OTHER = "200000000000000003";
+const ADMIN = "200000000000000004";
 const BOT = "600000000000000001", ROLE = "100000000000000001";
 const permissions = (...extras) => new PermissionsBitField([P.ViewChannel, P.ReadMessageHistory, ...extras]);
 
@@ -52,8 +53,11 @@ function setup(t) {
   };
   const members = new Collection([JAN, MAX, OTHER].map((id, index) => [id, {
     id, displayName: ["Jan", "Max", "Lennart"][index], user: { bot: false, username: `user${index}` },
+    permissions: permissions(),
     roles: { cache: new Collection([[ROLE, {}]]) },
   }]));
+  members.set(ADMIN, { id: ADMIN, displayName: "Admin", user: { bot: false },
+    roles: { cache: new Collection() }, permissions: permissions(P.ManageGuild) });
   const guild = { id: GUILD,
     channels: { cache: new Collection([[CHANNEL, channel]]), async fetch(id) { assert.equal(id, CHANNEL); return channel; } },
     members: { cache: members, async fetch({ user }) {
@@ -87,7 +91,8 @@ function setup(t) {
       getTextInputValue: (name) => values[name] };
   };
   return { directory, filePath, store, manager, record, data, message, channel, guild, members, settings,
-    edits, deletions, fetches, interaction, admin: (overrides) => interaction({ memberPermissions: permissions(P.ManageGuild), ...overrides }), current, change, apply, fields,
+    edits, deletions, fetches, interaction, admin: (overrides) => interaction({ user: { id: ADMIN }, member: members.get(ADMIN),
+      memberPermissions: permissions(P.ManageGuild), ...overrides }), current, change, apply, fields,
     removePost() { deleted = true; }, isDeleted: () => deleted };
 }
 
@@ -296,8 +301,9 @@ test("only the reporter and management can edit; being the other match participa
     await openManagement(command, f.store, f.manager, ROLE);
     assert.ok(command.modal);
   }
-  for (const id of [MAX, OTHER]) await assert.rejects(openManagement(f.interaction({ user: { id } }), f.store, f.manager, ROLE), /Nur die meldende/);
-  const admin = f.interaction({ user: { id: OTHER }, memberPermissions: permissions(P.ManageGuild) });
+  for (const id of [MAX, OTHER]) await assert.rejects(openManagement(f.interaction({ user: { id }, member: f.members.get(id) }),
+    f.store, f.manager, ROLE), /Nur die meldende/);
+  const admin = f.admin();
   await openManagement(admin, f.store, f.manager, ROLE);
   assert.ok(admin.modal);
   f.message.author.id = OTHER;
@@ -333,6 +339,33 @@ test("a reporter cannot delete through either the public button, a forged confir
       : handleManagementComponent(interaction, f.store, f.manager, ROLE, f.settings), /Nur die Ligaverwaltung/);
   }
   assert.equal(f.deletions.length, 0);
+});
+
+test("removing a reporter's participant role blocks both opening and submitting a correction", async (t) => {
+  const f = setup(t);
+  const command = await openCorrection(f);
+  const staleMember = { ...f.members.get(JAN), roles: { cache: new Collection(f.members.get(JAN).roles.cache) } };
+  f.members.get(JAN).roles.cache.delete(ROLE);
+  await assert.rejects(openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings), /aktueller Teilnehmerrolle/);
+  await assert.rejects(handleManagementComponent(f.interaction({ member: staleMember,
+    customId: command.modal.custom_id, fields: f.fields() }), f.store, f.manager, ROLE, f.settings), /aktueller Teilnehmerrolle/);
+  assert.equal(f.edits.length, 0);
+  assert.equal(f.current().change, undefined);
+});
+
+test("stale administrative permissions cannot let a participant confirm a deletion", async (t) => {
+  const f = setup(t);
+  const reporter = f.members.get(JAN);
+  reporter.permissions = permissions(P.ManageGuild);
+  const command = f.interaction({ customId: `report:delete:${f.record.id}` });
+  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  const staleMember = { ...reporter };
+  reporter.permissions = undefined;
+  const confirmation = f.interaction({ member: staleMember, memberPermissions: permissions(P.ManageGuild),
+    customId: rows(command.response)[0][0].custom_id });
+  await assert.rejects(handleManagementComponent(confirmation, f.store, f.manager, ROLE, f.settings), /Nur die Ligaverwaltung/);
+  assert.equal(f.deletions.length, 0);
+  assert.equal(f.current().change, undefined);
 });
 
 test("legacy reports with unknown reporters require management, and buttons must belong to the original bot post", async (t) => {
@@ -589,7 +622,7 @@ test("removal choices reject stale records, foreign users, revoked access and in
 test("removal suggestions retain historical names and require explicit selection for duplicate names", async (t) => {
   const f = setup(t);
   addPublished(f, { matchday: 2, players: [{ id: JAN, name: "Roran321" }, { id: MAX, name: "Max" }] });
-  f.members.clear();
+  for (const id of [JAN, MAX, OTHER]) f.members.delete(id);
   const autocomplete = f.admin({ options: removalOptions({ name: "ja" }), async respond(choices) { this.choices = choices; } });
   await handleRemovalAutocomplete(autocomplete, f.store);
   assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);

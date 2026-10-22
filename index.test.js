@@ -24,13 +24,21 @@ test("league settings, reports and role changes work together without exposing r
   let now = new Date("2026-10-18T12:00:00Z");
   const initialStore = new leagueSettings.LeagueSettingsStore(settingsPath, () => now);
   const roleId = "100000000000000001";
+  const managerRoleId = "100000000000000002";
   const janId = "200000000000000001";
   const maxId = "200000000000000002";
+  const friendId = "200000000000000003";
+  const adminId = "200000000000000004";
   const channelId = "400000000000000001";
   const members = new discord.Collection([janId, maxId].map((id, i) => [id, {
     id, displayName: ["Jan", "Max"][i], user: { bot: false },
+    permissions: new discord.PermissionsBitField(),
     roles: { cache: new discord.Collection([[roleId, {}]]) },
   }]));
+  members.set(friendId, { id: friendId, displayName: "Freund", user: { bot: false },
+    permissions: new discord.PermissionsBitField(), roles: { cache: new discord.Collection() } });
+  members.set(adminId, { id: adminId, displayName: "Admin", user: { bot: false },
+    permissions: new discord.PermissionsBitField([discord.PermissionFlagsBits.ManageGuild]), roles: { cache: new discord.Collection() } });
   const sequence = [];
   const posts = [];
   const publicMessages = new Map();
@@ -40,7 +48,7 @@ test("league settings, reports and role changes work together without exposing r
   const loading = new Promise((resolve) => { finishLoading = resolve; });
   const guild = {
     id: "300000000000000001",
-    roles: { cache: new discord.Collection([[roleId, {}]]) },
+    roles: { cache: new discord.Collection([[roleId, {}], [managerRoleId, {}]]) },
     channels: { cache: new discord.Collection([[channelId, {
       id: channelId, guildId: "300000000000000001",
       messages: { async fetch({ message }) {
@@ -128,7 +136,8 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "./league-commands") return leagueCommands;
       throw new Error(`Unexpected dependency: ${name}`);
     },
-    process: { env: { PARTICIPANT_ROLE_ID: roleId, CLIENT_ID: "600000000000000001", DISCORD_TOKEN: "test-token" } },
+    process: { env: { PARTICIPANT_ROLE_ID: roleId, LEAGUE_MANAGER_ROLE_ID: managerRoleId,
+      CLIENT_ID: "600000000000000001", DISCORD_TOKEN: "test-token" } },
     console: { log() {}, error(...args) { errors.push(args); } },
   });
   await new Promise(setImmediate);
@@ -147,6 +156,7 @@ test("league settings, reports and role changes work together without exposing r
 
   const command = {
     guild, commandName: "report", isChatInputCommand: () => true, isModalSubmit: () => false,
+    user: { id: janId }, member: members.get(janId),
     async reply(payload) { this.response = payload; },
     async showModal(modal) { this.modal = modal.toJSON(); },
   };
@@ -188,12 +198,13 @@ test("league settings, reports and role changes work together without exposing r
         assert.ok(payload.flags.includes(discord.MessageFlags.Ephemeral));
         this.deferred = true;
       },
+      async reply(payload) { this.response = payload; },
       async editReply(payload) { this.response = payload; },
     };
   }
   const valid = submission();
   await handle(valid);
-  assert.deepEqual(sequence, ["defer", "fetch", "fetch"]);
+  assert.deepEqual(sequence, ["defer", "fetch", "fetch", "fetch"]);
   assert.equal(posts.length, 1);
   assert.match(posts[0].embeds[0].toJSON().fields[0].value, /^\|\| .+ \|\|$/);
   assert.match(valid.response.content, /erfolgreich/);
@@ -210,7 +221,7 @@ test("league settings, reports and role changes work together without exposing r
   function adminCommand(subcommand, values = {}, allowed = true) {
     return {
       guild, commandName: "liga", isChatInputCommand: () => true, isModalSubmit: () => false,
-      user: { id: janId }, member: members.get(janId),
+      user: { id: allowed ? adminId : janId }, member: members.get(allowed ? adminId : janId),
       memberPermissions: new discord.PermissionsBitField(allowed ? [discord.PermissionFlagsBits.ManageGuild] : []),
       options: {
         getSubcommand: () => subcommand,
@@ -340,7 +351,8 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(correction.response.content, /korrigiert/);
   assert.equal(posts.length, 3, "Correcting a report edits its post instead of sending a new one");
   assert.equal(stored().find((match) => match.publication.messageId === "500000000000000001").matchday, 3);
-  const deletion = { ...management, memberPermissions: new discord.PermissionsBitField([discord.PermissionFlagsBits.ManageGuild]),
+  const deletion = { ...management, user: { id: adminId }, member: members.get(adminId),
+    memberPermissions: members.get(adminId).permissions,
     customId: posts[0].components[0].toJSON().components[1].custom_id };
   await handle(deletion);
   const confirmation = {
@@ -354,11 +366,12 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(stored().length, 2);
   // The slash fallback discovers a manually deleted post without its message link.
   publicMessages.delete("500000000000000002");
-  const removalAutocomplete = { ...autocomplete, commandName: "report-entfernen", memberPermissions: deletion.memberPermissions };
+  const removalAutocomplete = { ...autocomplete, commandName: "report-entfernen", user: deletion.user,
+    member: deletion.member, memberPermissions: deletion.memberPermissions };
   await handle(removalAutocomplete);
   assert.deepEqual(removalAutocomplete.choices, [{ name: "Max", value: maxId }]);
   const removal = {
-    ...search, user: management.user, member: management.member,
+    ...search, user: deletion.user, member: deletion.member,
     commandName: "report-entfernen", memberPermissions: deletion.memberPermissions,
     options: { getInteger: (name) => name === "season" ? 3 : 2, getString: () => janId },
   };
@@ -380,4 +393,89 @@ test("league settings, reports and role changes work together without exposing r
   await handle(failedSuggestions);
   assert.equal(failedSuggestions.choices.length, 0);
   assert.match(errors.at(-1)[0], /Suchvorschlägen/);
+
+  const friend = members.get(friendId);
+  const friendCommand = { ...command, modal: undefined, response: undefined,
+    user: { id: friendId }, member: friend };
+  const friendSubmission = () => {
+    const request = { ...submission(4, "4"), user: { id: friendId }, member: friend };
+    request.fields.fields.get("link").value = "https://example.org/friend";
+    return request;
+  };
+  const countBefore = stored().length;
+  const postsBefore = posts.length;
+  await t.test("a member without either league role cannot open or submit a report", async () => {
+    await handle(friendCommand);
+    assert.equal(friendCommand.modal, undefined);
+    assert.match(friendCommand.response.content, /Nur Teilnehmer/);
+    assert.ok(friendCommand.response.flags.includes(discord.MessageFlags.Ephemeral));
+    const deniedSubmission = friendSubmission();
+    await handle(deniedSubmission);
+    assert.match(deniedSubmission.response.content, /Nur Teilnehmer/);
+    assert.equal(stored().length, countBefore);
+    assert.equal(posts.length, postsBefore);
+  });
+
+  await t.test("revoking a role while a report is open prevents publication and archive writes", async () => {
+    friend.roles.cache.set(roleId, {});
+    await handle(friendCommand);
+    assert.ok(friendCommand.modal);
+    const staleMember = { ...friend, roles: { cache: new discord.Collection(friend.roles.cache) } };
+    const request = { ...friendSubmission(), member: staleMember };
+    friend.roles.cache.clear();
+    await handle(request);
+    assert.match(request.response.content, /inzwischen entzogen/);
+    assert.equal(stored().length, countBefore);
+    assert.equal(posts.length, postsBefore);
+  });
+
+  await t.test("a participant with no Discord permissions can report and edit their own post but cannot delete it", async () => {
+    friend.roles.cache.set(roleId, {});
+    const request = friendSubmission();
+    await handle(request);
+    assert.match(request.response.content, /erfolgreich/);
+    const record = stored().find((entry) => entry.reporter?.id === friendId);
+    assert.ok(record);
+    const button = { ...management, user: { id: friendId }, member: friend,
+      message: publicMessages.get(record.publication.messageId), customId: `report:edit:${record.id}` };
+    await handle(button);
+    assert.ok(button.modal);
+    const edit = { ...correction, ...button, isButton: () => false, isModalSubmit: () => true,
+      customId: button.modal.custom_id, fields: {
+        getStringSelectValues: (name) => [name === "matchday" ? "4" : name === "winner" ? janId : maxId],
+        getTextInputValue: (name) => name === "score" ? "1-0" : record.link,
+      } };
+    await handle(edit);
+    assert.match(edit.response.content, /korrigiert/);
+    const current = runtimeState.matchStore.get(record.id, guild.id);
+    const forged = `manage:delete:${record.id}:${require("./match-store").revisionOf(current)}:${friendId}`;
+    for (const customId of [`report:delete:${record.id}`, forged]) {
+      const denied = { ...confirmation, ...button, customId };
+      await handle(denied);
+      assert.match(denied.response.content, /Nur die Ligaverwaltung/);
+      assert.ok(publicMessages.has(record.publication.messageId));
+      assert.ok(runtimeState.matchStore.get(record.id, guild.id));
+    }
+  });
+
+  await t.test("a separate management role can delete without Discord privileges; revoked roles fail at confirmation", async () => {
+    const record = stored().find((entry) => entry.reporter?.id === friendId);
+    friend.roles.cache.clear();
+    friend.roles.cache.set(managerRoleId, {});
+    const button = { ...management, user: { id: friendId }, member: friend,
+      message: publicMessages.get(record.publication.messageId), customId: `report:delete:${record.id}` };
+    await handle(button);
+    assert.match(button.response.content, /wirklich löschen/);
+    const staleMember = { ...friend, roles: { cache: new discord.Collection(friend.roles.cache) } };
+    const confirm = { ...confirmation, ...button, member: staleMember,
+      customId: button.response.components[0].toJSON().components[0].custom_id };
+    friend.roles.cache.clear();
+    await handle(confirm);
+    assert.match(confirm.response.content, /Nur die Ligaverwaltung/);
+    assert.ok(publicMessages.has(record.publication.messageId));
+    friend.roles.cache.set(managerRoleId, {});
+    await handle({ ...confirm, member: friend });
+    assert.equal(publicMessages.has(record.publication.messageId), false);
+    assert.equal(stored().length, countBefore);
+  });
 });

@@ -67,7 +67,7 @@ LEAGUE_MANAGER_ROLE_ID=deine-ligaverwaltungsrollen-id
 | --- | --- |
 | `DISCORD_TOKEN` | Pflichtwert: Bot-Token ohne `Bot`-Präfix |
 | `CLIENT_ID` | Pflichtwert: Application-ID desselben Bots |
-| `PARTICIPANT_ROLE_ID` | Pflichtwert: Rolle für Spielernamen und Logabruf |
+| `PARTICIPANT_ROLE_ID` | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports und Logabruf |
 | `LEAGUE_MANAGER_ROLE_ID` | Optional: separate Verwaltungsrolle; ohne Wert verwalten nur Serververwalter die Liga |
 | `DATA_DIR` | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount |
 | `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad |
@@ -87,8 +87,9 @@ Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine
 
 | Aktion | Freigabe |
 | --- | --- |
-| `/report`, `/suchen` | Anwendungsbefehle im Kanal verwenden dürfen; zusätzliche Kanal-/Integrationsregeln sind in Discord konfigurierbar |
-| Report bearbeiten | Gespeicherte meldende Person, Ligaverwaltungsrolle oder Serververwalter |
+| `/report` | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter |
+| `/suchen` | Anwendungsbefehle im Kanal verwenden dürfen; zusätzliche Kanal-/Integrationsregeln sind in Discord konfigurierbar |
+| Report bearbeiten | Gespeicherte meldende Person mit aktueller Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter |
 | Report löschen | Ligaverwaltungsrolle oder Serververwalter |
 | `/report-entfernen` | Ligaverwaltungsrolle oder Serververwalter |
 | `/liga season`, `/liga status` | Ligaverwaltungsrolle oder Serververwalter |
@@ -96,7 +97,7 @@ Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine
 
 Die andere am Match beteiligte Person bekommt dadurch keine Bearbeitungsrechte. Die Melder-ID wird bei der ersten Meldung gespeichert und bleibt bei Korrekturen erhalten. Ein erneut gemeldetes Duplikat überträgt diese Zuordnung nicht.
 
-Die Buttons sind für alle gleich sichtbar. Der Bot prüft die Rechte beim Öffnen und vor der endgültigen Änderung erneut. Vor dem Speichern bzw. Löschen lädt er die handelnde Person frisch; entzogene Rollen werden berücksichtigt. Zusätzlich sind Kanal- und Verlaufszugriff erforderlich. Bei privaten Threads wird die aktuelle Mitgliedschaft oder `ManageThreads` geprüft. Veraltete Formulare und Bestätigungen werden abgewiesen.
+Die Buttons sind für alle gleich sichtbar. Der Bot prüft die Rechte beim Öffnen und vor der endgültigen Änderung erneut. Vor dem Erstellen, Speichern bzw. Löschen lädt er die handelnde Person frisch; entzogene Rollen werden berücksichtigt. Die Verwaltungsfreigabe stammt ausschließlich aus den Rollen bzw. Serverrechten dieses Mitglieds; ältere Berechtigungen aus einem bereits geöffneten Formular werden nicht als Ersatz verwendet. Zusätzlich sind beim Bearbeiten und Löschen Kanal- und Verlaufszugriff erforderlich. Bei privaten Threads wird die aktuelle Mitgliedschaft oder `ManageThreads` geprüft. Veraltete Formulare und Bestätigungen werden abgewiesen.
 
 `/liga` ist als Gruppe für Teilnehmer sichtbar, damit sie `log` verwenden können. Die Verwaltungs-Unterbefehle werden im Bot gesondert gesperrt. Discord-Integrationsregeln dürfen nicht die gesamte Gruppe ausschließlich auf Admins beschränken, wenn Teilnehmer das Protokoll abrufen sollen.
 
