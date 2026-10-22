@@ -5,6 +5,7 @@ const { dirname, join, resolve } = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { parseSettingsDocument } = require("./league-settings");
 const { parseMatchesDocument } = require("./match-store");
+const { logError } = require("./diagnostics");
 
 const FILES = ["league-settings.json", "matches.json"];
 const BACKUP_NAME = /^backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-[a-f0-9-]{36}$/;
@@ -86,15 +87,15 @@ class DataBackups {
         const entries = readdirSync(path).sort();
         const expected = [...FILES].sort();
         if (entries.length !== expected.length || !entries.every((entry, index) => entry === expected[index])) {
-          throw new Error("Der Ordner enthält unerwartete Dateien und wurde beibehalten.");
+          throw Object.assign(new Error("Der Ordner enthält unerwartete Dateien und wurde beibehalten."), { code: "BACKUP_CONTENTS" });
         }
         if (FILES.some((file) => !lstatSync(join(path, file)).isFile())) {
-          throw new Error("Der Ordner enthält unerwartete Dateitypen und wurde beibehalten.");
+          throw Object.assign(new Error("Der Ordner enthält unerwartete Dateitypen und wurde beibehalten."), { code: "BACKUP_CONTENTS" });
         }
         for (const file of FILES) unlinkSync(join(path, file));
         rmdirSync(path);
       } catch (error) {
-        cleanupErrors.push(`${obsolete}: ${error.message}`);
+        cleanupErrors.push({ backupName: obsolete, error });
       }
     }
     return { created: true, path: destination, cleanupErrors };
@@ -106,9 +107,11 @@ function startAutomaticBackups(backups, logger = console) {
     try {
       const result = backups.create();
       if (result.created) logger.log(`✅ Datensicherung erstellt: ${result.path}`);
-      for (const error of result.cleanupErrors) logger.error(`⚠️ Alte Datensicherung konnte nicht entfernt werden: ${error}`);
+      for (const failure of result.cleanupErrors) logError("⚠️ Alte Datensicherung konnte nicht entfernt werden:",
+        failure.error, { operation: "backup.cleanup", backupName: failure.backupName }, logger);
     } catch (error) {
-      logger.error(`⚠️ Datensicherung fehlgeschlagen: ${error.message}. Bitte Datenordner und freien Speicher prüfen. Vor der ersten Sicherung einmal /liga season einrichten.`);
+      logError("⚠️ Datensicherung fehlgeschlagen. Bitte Datenordner und freien Speicher prüfen.", error,
+        { operation: "backup.create" }, logger);
     }
   };
   check();

@@ -184,9 +184,11 @@ test("automatic backups check at startup and hourly, recover from failures, and 
   assert.equal(logs.length, 1);
   callback();
   assert.equal(logs.length, 1);
-  t.mock.method(backups, "create", () => { throw new Error("disk unavailable"); });
+  t.mock.method(backups, "create", () => { throw Object.assign(new Error("private-backup-details"), { code: "ENOSPC" }); });
   callback();
-  assert.match(errors[0], /disk unavailable/);
+  assert.match(errors[0], /ENOSPC/);
+  assert.match(errors[0], /Datenträger voll/);
+  assert.ok(!errors[0].includes("private-backup-details"));
   backups.create.mock.restore();
   setNow("2026-10-20T08:00:00Z");
   callback();
@@ -206,10 +208,11 @@ test("manual CLI uses the configured directory, never connects to Discord and ex
   assert.match(result.stdout, /Datensicherung erstellt/);
   assert.ok(!result.stdout.includes("must-not-be-printed"));
   assert.equal(backups.list().length, 1);
-  fs.writeFileSync(settingsPath, "broken");
+  fs.writeFileSync(settingsPath, "broken must-not-be-printed");
   const failed = run();
   assert.equal(failed.status, 1);
   assert.match(failed.stderr, /Datensicherung fehlgeschlagen/);
+  assert.ok(!failed.stderr.includes("must-not-be-printed"));
   assert.equal(backups.list().length, 1);
 });
 

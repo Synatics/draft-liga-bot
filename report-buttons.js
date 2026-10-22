@@ -1,4 +1,5 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { logError } = require("./diagnostics");
 
 function reportButtons(id) {
   return [new ActionRowBuilder().addComponents(
@@ -19,7 +20,9 @@ async function installReportButtons(client, store, logger = console) {
       await message.edit({ components: reportButtons(record.id), allowedMentions: { parse: [] } });
       store.markControlsInstalled(record.id, record.guildId);
     } catch (error) {
-      if (Number(error.code) !== 10008) logger.error("Buttons konnten an einem älteren Ergebnispost nicht ergänzt werden. Bitte Kanalrechte prüfen.");
+      if (Number(error.code) !== 10008) logError("Buttons konnten an einem älteren Ergebnispost nicht ergänzt werden. Bitte Kanalrechte prüfen.",
+        error, { operation: "buttons.install", guildId: record.guildId, channelId: record.channelId,
+          reportId: record.id, messageId: record.publication.messageId }, logger);
     }
   }
 }

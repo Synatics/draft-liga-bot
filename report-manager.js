@@ -1,5 +1,6 @@
 const { MatchStoreError } = require("./match-store");
 const { reportButtons } = require("./report-buttons");
+const { causedError } = require("./diagnostics");
 
 class ReportManagementError extends Error {}
 
@@ -20,6 +21,8 @@ class ReportManager {
       }
       if (change) this.store.beginChange(id, guildId, expectedRevision, change, actor);
       const record = this.store.get(id, guildId);
+      const context = { guildId, channelId: record.channelId, reportId: id, messageId: record.publication?.messageId,
+        operation: record.change?.kind === "delete" ? "report.delete" : "report.edit" };
       if (!record.change) throw new ReportManagementError("Für diesen Report ist keine Änderung vorgemerkt.");
       try {
         let message;
@@ -38,18 +41,19 @@ class ReportManager {
         const rejected = error instanceof ReportManagementError || Number(error.code) === 10008 ||
           (Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && error.status !== 408);
         if (rejected && change && !hadPendingChange) {
-          try { this.store.finishChange(id, guildId, true); } catch {
-            throw new ReportManagementError("Discord hat die Änderung abgelehnt; die Vormerkung konnte aber nicht aufgehoben werden. Bitte Speicher und Kanalrechte prüfen und die Aktion erneut öffnen.");
+          try { this.store.finishChange(id, guildId, true); } catch (storageError) {
+            throw causedError(ReportManagementError, "Discord hat die Änderung abgelehnt; die Vormerkung konnte aber nicht aufgehoben werden. Bitte Speicher und Kanalrechte prüfen und die Aktion erneut öffnen.",
+              new AggregateError([error, storageError], "Discord-Ablehnung und fehlgeschlagene Speicherung."), context);
           }
-          throw new ReportManagementError(Number(error.code) === 10008
+          throw causedError(ReportManagementError, Number(error.code) === 10008
             ? "Der Ergebnispost existiert nicht mehr. Du kannst seinen Archiv-Eintrag mit /report-entfernen über Season, Spieler und optional Spieltag finden und löschen."
-            : "Die Änderung wurde nicht durchgeführt. Bitte den Ergebnispost und die Kanalrechte des Bots prüfen und die Aktion erneut öffnen.");
+            : "Die Änderung wurde nicht durchgeführt. Bitte den Ergebnispost und die Kanalrechte des Bots prüfen und die Aktion erneut öffnen.", error, context);
         }
-        throw new ReportManagementError("Der Ausgang der Änderung ist unklar. Sie bleibt gespeichert. Bitte dieselbe Aktion erneut am Post öffnen; der Bot wiederholt sie am bestehenden Post.");
+        throw causedError(ReportManagementError, "Der Ausgang der Änderung ist unklar. Sie bleibt gespeichert. Bitte dieselbe Aktion erneut am Post öffnen; der Bot wiederholt sie am bestehenden Post.", error, context);
       }
       try { this.store.finishChange(id, guildId, false, actor); } catch (error) {
         if (!(error instanceof MatchStoreError)) throw error;
-        throw new ReportManagementError("Der Discord-Post wurde geändert, aber das Archiv konnte nicht aktualisiert werden. Bitte den Speicher prüfen und dieselbe Aktion erneut öffnen, um die gespeicherte Änderung abzuschließen.");
+        throw causedError(ReportManagementError, "Der Discord-Post wurde geändert, aber das Archiv konnte nicht aktualisiert werden. Bitte den Speicher prüfen und dieselbe Aktion erneut öffnen, um die gespeicherte Änderung abzuschließen.", error, context);
       }
       return record.change.kind;
     } finally {

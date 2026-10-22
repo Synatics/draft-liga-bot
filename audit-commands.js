@@ -1,6 +1,7 @@
 const { AttachmentBuilder, ChannelType, MessageFlags, PermissionFlagsBits: P } = require("discord.js");
 const { LeagueSettingsError } = require("./league-settings");
 const { isParticipant, isLeagueManager, currentMember } = require("./permissions");
+const { logError, interactionContext } = require("./diagnostics");
 
 const clean = (value) => String(value ?? "unbekannt").replace(/[\u0000-\u001f\u007f]/g,
   (character) => character === "\n" ? "\\n" : character === "\r" ? "\\r" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
@@ -85,6 +86,8 @@ async function handleAuditCommand(interaction, database, config) {
       delivered++;
     } catch (error) {
       const blocked = [50007, 50278].includes(Number(error.code));
+      if (!blocked) logError("Fehler beim Senden des Änderungsprotokolls per DM:", error,
+        { ...interactionContext(interaction), season, operation: "audit.dm" });
       await interaction.editReply({ content: `❌ Das Protokoll konnte nicht vollständig per DM zugestellt werden. ${delivered} von ${files.length} Dateien zugestellt. ` +
         (blocked ? "Bitte Direktnachrichten von Servermitgliedern erlauben und prüfen, ob der Bot blockiert ist." : "Bitte später erneut versuchen.") });
       return;

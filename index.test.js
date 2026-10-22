@@ -9,7 +9,7 @@ const discord = require("discord.js");
 const reports = require("./reports");
 const leagueSettings = require("./league-settings");
 const leagueCommands = require("./league-commands");
-const { MatchStore, MatchStoreError } = require("./match-store");
+const { MatchStore } = require("./match-store");
 const searchCommands = require("./search-commands");
 
 test("league settings, reports and role changes work together without exposing results", async (t) => {
@@ -103,16 +103,16 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "./reports") return reports;
       if (name === "./report-publisher") return require(name);
       if (name === "./report-manager" || name === "./report-management") return require(name);
-      if (["./database-backups", "./report-buttons", "./permissions"].includes(name)) return require(name);
+      if (["./database-backups", "./report-buttons", "./permissions", "./diagnostics"].includes(name)) return require(name);
       if (name === "./startup") return {
         ...require(name),
         prepareStartup(env) {
           const state = require(name).prepareStartup({ ...env, DATA_DIR: directory });
           runtimeState = state;
           state.settingsStore.now = () => now;
-          const save = state.matchStore.save.bind(state.matchStore);
-          state.matchStore.save = (matches, event) => {
-            if (failSaving) throw new MatchStoreError("Das Replay konnte nicht gespeichert werden.");
+          const save = state.database.saveMatches.bind(state.database);
+          state.database.saveMatches = (matches, event) => {
+            if (failSaving) throw Object.assign(new Error("write failed: private-request-data"), { code: "ENOSPC" });
             save(matches, event);
           };
           return state;
@@ -308,17 +308,26 @@ test("league settings, reports and role changes work together without exposing r
   failSaving = true;
   const unsaved = submission(4);
   await handle(unsaved);
-  assert.match(unsaved.response.content, /Replay konnte nicht gespeichert/);
+  assert.match(unsaved.response.content, /nicht gespeichert/);
+  assert.match(errors[0][0], /ENOSPC/);
+  assert.match(errors[0][0], new RegExp(guild.id));
+  assert.match(errors[0][0], new RegExp(channelId));
+  assert.ok(!errors[0][0].includes("private-request-data"));
+  assert.ok(!unsaved.response.content.includes("ENOSPC"));
   assert.equal(posts.length, 2, "A storage failure must not produce a public result");
   assert.equal(stored().length, 2);
   failSaving = false;
 
   const failedPost = submission(4);
-  failedPost.channel.send = async () => { throw Object.assign(new Error("Missing Permissions"), { status: 403, code: 50013 }); };
+  failedPost.channel.send = async () => { throw Object.assign(new Error("Missing Permissions: private-request-data"),
+    { status: 403, code: 50013, requestBody: { token: "private-request-data" } }); };
   await handle(failedPost);
   assert.match(failedPost.response.content, /Replay ist für \/suchen gespeichert/);
-  assert.equal(errors.length, 1);
-  assert.match(errors[0][0], /Fehler beim Posten/);
+  assert.equal(errors.length, 2);
+  assert.match(errors[1][0], /Fehler beim Posten/);
+  assert.match(errors[1][0], /"discordCode":50013/);
+  assert.match(errors[1][0], /"reportId":"[a-f0-9]{24}"/);
+  assert.ok(!errors[1][0].includes("private-request-data"));
   assert.equal(stored().length, 3);
   await handle(submission(4));
   assert.equal(stored().length, 3, "Retrying a failed public post must not duplicate search results");

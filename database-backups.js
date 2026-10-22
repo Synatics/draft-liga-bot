@@ -43,7 +43,9 @@ class SqliteBackups {
       this.check(join(temporary, DATABASE_NAME));
       renameSync(temporary, destination);
     } catch (error) {
-      database?.close();
+      try { database?.close(); } catch (closeError) {
+        error = new AggregateError([error, closeError], "Sicherung und Schließen der Datenbank sind fehlgeschlagen.", { cause: error });
+      }
       try { unlinkSync(join(temporary, DATABASE_NAME)); } catch { /* Only remove our own temporary file. */ }
       try { rmdirSync(temporary); } catch { /* Preserve unexpected files. */ }
       throw error;
@@ -55,11 +57,11 @@ class SqliteBackups {
       try {
         const entries = readdirSync(path);
         if (entries.length !== 1 || entries[0] !== DATABASE_NAME || !lstatSync(join(path, DATABASE_NAME)).isFile()) {
-          throw new Error("Unerwarteter Inhalt; die Sicherung wurde beibehalten.");
+          throw Object.assign(new Error("Unerwarteter Inhalt; die Sicherung wurde beibehalten."), { code: "BACKUP_CONTENTS" });
         }
         unlinkSync(join(path, DATABASE_NAME));
         rmdirSync(path);
-      } catch (error) { cleanupErrors.push(`${obsolete}: ${error.message}`); }
+      } catch (error) { cleanupErrors.push({ backupName: obsolete, error }); }
     }
     return { created: true, path: destination, cleanupErrors };
   }

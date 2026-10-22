@@ -31,18 +31,18 @@ class ReportPublisher {
           try {
             this.store.setPublication(record.id, { status: "pending" });
           } catch (storageError) {
-            return { status: "failed-unconfirmed", error, storageError };
+            return { status: "failed-unconfirmed", reportId: record.id, error, storageError };
           }
-          return { status: "failed", error };
+          return { status: "failed", reportId: record.id, error };
         }
-        return { status: "uncertain", error };
+        return { status: "uncertain", reportId: record.id, error };
       }
 
       try {
         this.store.setPublication(record.id, { status: "published", messageId: sent.id });
       } catch (error) {
         // The on-disk 'sending' state still prevents another post after a restart.
-        return { status: "published-unconfirmed", messageId: sent.id, error };
+        return { status: "published-unconfirmed", reportId: record.id, messageId: sent.id, error };
       }
       return { status: "published", messageId: sent.id };
     } finally {

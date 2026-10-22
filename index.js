@@ -27,6 +27,7 @@ const { installReportButtons } = require("./report-buttons");
 const { canReport, currentMember, actorOf } = require("./permissions");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 const { prepareStartup, connectDiscord, failStartup } = require("./startup");
+const { logError, interactionContext } = require("./diagnostics");
 
 let client;
 let database;
@@ -59,14 +60,17 @@ async function startBot() {
   }
 
   function warmGuild(guild) {
-    prepareGuild(guild).catch((error) => console.error("Fehler beim Laden der Teilnehmer:", error));
+    prepareGuild(guild).catch((error) => logError("Fehler beim Laden der Teilnehmer:", error,
+      { operation: "members.load", guildId: guild.id }, console));
   }
 
+  client.on(Events.Error, (error) => logError("Fehler der Discord-Verbindung:", error, { operation: "discord.connection" }, console));
   client.on(Events.ClientReady, () => {
     console.log("✅ Bot ist mit Discord verbunden.");
     loadedGuilds.clear();
     for (const guild of client.guilds.cache.values()) warmGuild(guild);
-    installReportButtons(client, matchStore).catch(() => console.error("Ältere Ergebnisposts konnten nicht mit Buttons ergänzt werden."));
+    installReportButtons(client, matchStore, console).catch((error) => logError("Ältere Ergebnisposts konnten nicht mit Buttons ergänzt werden.",
+      error, { operation: "buttons.install" }, console));
   });
   client.on(Events.GuildCreate, warmGuild);
   client.on(Events.GuildDelete, (guild) => loadedGuilds.delete(guild.id));
@@ -98,6 +102,7 @@ async function startBot() {
     );
     if (!isReportCommand && !isReportSubmit && !isLeagueCommand && !isSearchCommand && !isSearchAutocomplete && !isRemovalAutocomplete &&
         !isManagementCommand && !isManagementComponent) return;
+    const logContext = interactionContext(interaction);
 
     try {
       if (isRemovalAutocomplete) {
@@ -163,11 +168,13 @@ async function startBot() {
         interaction.channel,
         createResultMessage(winner, loser, score, link, context)
       );
-      if (publication.error) console.error(
+      if (publication.error) logError(
         publication.status === "published-unconfirmed" ? "Fehler beim Speichern des Versandstatus:" : "Fehler beim Posten des gespeicherten Reports:",
-        publication.error
+        publication.error, { ...logContext, ...context, reportId: publication.reportId, messageId: publication.messageId,
+          operation: publication.status === "published-unconfirmed" ? "report.status" : "report.publish" }, console
       );
-      if (publication.storageError) console.error("Fehler beim Speichern des Versandstatus:", publication.storageError);
+      if (publication.storageError) logError("Fehler beim Speichern des Versandstatus:", publication.storageError,
+        { ...logContext, reportId: publication.reportId, operation: "report.status" }, console);
       const messageLink = publication.messageId
         ? `https://discord.com/channels/${interaction.guild.id}/${interaction.channelId}/${publication.messageId}` : null;
       const replies = {
@@ -188,7 +195,7 @@ async function startBot() {
       });
     } catch (error) {
       if (isSearchAutocomplete || isRemovalAutocomplete) {
-        console.error("Fehler bei den Suchvorschlägen:", error);
+        logError("Fehler bei den Suchvorschlägen:", error, { ...logContext, operation: "interaction.autocomplete" }, console);
         if (!interaction.responded) {
           try { await interaction.respond([]); } catch { /* The autocomplete interaction may have expired. */ }
         }
@@ -196,7 +203,8 @@ async function startBot() {
       }
       const expected = error instanceof ReportError || error instanceof LeagueSettingsError ||
         error instanceof MatchStoreError || error instanceof SearchError || error instanceof ReportManagementError;
-      if (!expected) console.error("Fehler beim Verarbeiten des Reports:", error);
+      if (!expected || Object.hasOwn(error, "cause")) logError("Fehler beim Verarbeiten des Reports:", error,
+        { ...logContext, operation: "interaction" }, console);
       const content = expected
         ? `❌ ${error.message}`
         : "❌ Es gab einen Fehler beim Verarbeiten des Befehls. Bitte versuche es erneut.";
@@ -207,7 +215,7 @@ async function startBot() {
           await interaction.reply({ content, flags: [MessageFlags.Ephemeral] });
         }
       } catch (replyError) {
-        console.error("Fehler beim Senden der Rückmeldung:", replyError);
+        logError("Fehler beim Senden der Rückmeldung:", replyError, { ...logContext, operation: "interaction.reply" }, console);
       }
     }
   });
@@ -216,4 +224,9 @@ async function startBot() {
   startAutomaticBackups(new SqliteBackups(databasePath));
 }
 
-startBot().catch((error) => { database?.close(); return failStartup(error, client); });
+startBot().catch((error) => {
+  try { database?.close(); } catch (closeError) {
+    logError("Datenbank konnte beim Startabbruch nicht geschlossen werden:", closeError, { operation: "database.close" }, console);
+  }
+  return failStartup(error, client);
+});

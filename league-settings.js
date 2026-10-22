@@ -1,6 +1,7 @@
 const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = require("node:fs");
 const { dirname, join, resolve, relative, isAbsolute, sep } = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { causedError } = require("./diagnostics");
 
 class LeagueSettingsError extends Error {}
 
@@ -97,7 +98,8 @@ class LeagueSettingsStore {
       this.guilds = data.guilds;
     } catch (error) {
       if (error.code !== "ENOENT") {
-        throw new LeagueSettingsError(`Die gespeicherten Liga-Einstellungen konnten nicht gelesen werden: ${error.message}`);
+        throw causedError(LeagueSettingsError, "Die gespeicherten Liga-Einstellungen konnten nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
+          error, { operation: "settings.read", file: storage ? "liga.sqlite" : "league-settings.json" });
       }
     }
   }
@@ -125,9 +127,10 @@ class LeagueSettingsStore {
   save(guildId, settings) {
     validateSettings(settings);
     const guilds = { ...this.guilds, [guildId]: { ...settings } };
+    const context = { operation: "settings.write", file: this.storage ? "liga.sqlite" : "league-settings.json", guildId, season: settings.season };
     if (this.storage) {
-      try { this.storage.saveSettings(guilds); } catch {
-        throw new LeagueSettingsError("Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden.");
+      try { this.storage.saveSettings(guilds); } catch (error) {
+        throw causedError(LeagueSettingsError, "Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden.", error, context);
       }
       this.guilds = guilds;
       return this.get(guildId);
@@ -139,9 +142,8 @@ class LeagueSettingsStore {
       renameSync(temporaryPath, this.filePath);
     } catch (error) {
       try { unlinkSync(temporaryPath); } catch { /* No temporary file may have been created. */ }
-      throw new LeagueSettingsError(
-        "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume."
-      );
+      throw causedError(LeagueSettingsError,
+        "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.", error, context);
     }
     // Publish the new settings only once they are safely stored on disk.
     this.guilds = guilds;

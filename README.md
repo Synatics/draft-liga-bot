@@ -236,7 +236,7 @@ Lokale Einstellungen und Daten werden nicht automatisch zu Railway übertragen. 
 npm test
 ```
 
-Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulierte Discord-Interaktionen. Sie lesen keine produktiven Tokens und senden keine echten Nachrichten. Abgedeckt sind Übernahme/Wiederanlauf, atomare Report-/Log-Speicherung, Backups/Wiederherstellung, Button-Zuordnung, Melder- und Rollenrechte, Rechteentzug, Pflicht-Season, DMs, UTF-8-Export, Spoiler, Duplikate und Kalender-/Sommerzeitgrenzen.
+Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulierte Discord-Interaktionen. Sie lesen keine produktiven Tokens und senden keine echten Nachrichten. Abgedeckt sind Übernahme/Wiederanlauf, atomare Report-/Log-Speicherung, Backups/Wiederherstellung, Button-Zuordnung, Melder- und Rollenrechte, Rechteentzug, Pflicht-Season, DMs, UTF-8-Export, Spoiler, Duplikate, Kalender-/Sommerzeitgrenzen sowie Fehlerdiagnosen ohne Zugangsdaten.
 
 | Dateien | Aufgabe |
 | --- | --- |
@@ -244,11 +244,34 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 | `database.js` | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen |
 | `match-store.js`, `league-settings.js` | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups |
 | `permissions.js` | Gemeinsame Rollenprüfung und handelnde Person |
+| `diagnostics.js` | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern |
 | `reports.js`, `report-publisher.js` | Formular, Spoiler und persistenter Versandstatus |
 | `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen |
 | `league-commands.js`, `audit-commands.js` | Verwaltung und Logdatei per DM |
 | `search-commands.js` | Replay-Suche |
 | `database-backups.js`, `data-backups.js`, `backup.js` | SQLite- und ältere JSON-Sicherungen |
+
+## Technische Fehlerprotokolle
+
+Technische Fehler erscheinen im Terminal beziehungsweise in den Laufzeit-Logs des Railway-Services. Jede Meldung besteht aus einer festen Beschreibung und einem JSON-Objekt mit UTC-Zeitstempel, Vorgang (`operation`) und Fehlerursachen (`causes`). Soweit verfügbar kommen Server-, Kanal-, Nutzer-, Nachrichten- und Report-ID sowie Season und Spieltag hinzu. Dafür sind keine zusätzlichen Umgebungsvariablen oder Logdateien erforderlich.
+
+Speicher- und Discord-Fehler behalten ihre ursprüngliche Ursache über `Error.cause`. Dadurch ist beispielsweise bei einer fehlgeschlagenen Reportänderung erkennbar, ob Discord die Änderung abgelehnt hat oder danach die Speicherung gescheitert ist. Scheitert zusätzlich ein Datenbank-Rollback, werden beide Ursachen ausgewertet. Eine technische Ursache wird auch dann protokolliert, wenn der Nutzer eine verständliche Fehlermeldung erhält. Normale Eingabefehler und fehlende Rollen erzeugen keine technischen Fehlereinträge.
+
+| Diagnose | Bedeutung |
+| --- | --- |
+| `EACCES`, `EPERM` | Dateirechte oder Dateisperren prüfen |
+| `ENOSPC`, `EDQUOT` | Datenträger voll oder Speicherquote ausgeschöpft |
+| `SQLITE_READONLY` | Schreibzugriff auf die Datenbank fehlt |
+| `SQLITE_FULL` | SQLite kann wegen eines Speicher- oder Datenbanklimits nicht weiter schreiben |
+| `SQLITE_BUSY`, `SQLITE_LOCKED` | Ein anderer Zugriff blockiert die Datenbank |
+| `SQLITE_CORRUPT`, `SQLITE_NOTADB` | Datenbankdatei beschädigt oder kein lesbares SQLite-Format |
+| Discord-Code `50013` / HTTP `403` | Discord-Berechtigungen fehlen |
+
+SQLite-Diagnosen enthalten neben `ERR_SQLITE_ERROR` den numerischen SQLite-Code und, soweit zugeordnet, dessen Namen. Auch erweiterte Codes werden ihrer Hauptkategorie zugeordnet. [SQLite-Fehlercodes](https://www.sqlite.org/rescode.html)
+
+Es werden ausschließlich ausgewählte Fehlercodes, Typen und geprüfte Kontextfelder ausgegeben. Rohe Fehlertexte und Stacks, Request-Bodys, Header, Dateiinhalte, Replay-URLs und Ergebnisse werden nicht in die technischen Fehlermeldungen übernommen. Unbekannte Fehler bleiben als Fehlertyp sichtbar, ohne möglicherweise vertrauliche Freitexte auszugeben. Die Anzahl verketteter Ursachen ist begrenzt.
+
+Das ist unabhängig vom fachlichen Änderungsprotokoll in SQLite: `/liga log season:…` liefert weiterhin die Report-Historie per DM, nicht diese technischen Fehlerdiagnosen.
 
 ## Fehlerbehebung
 

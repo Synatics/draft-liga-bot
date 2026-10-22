@@ -8,6 +8,7 @@ const { createResultMessage } = require("./reports");
 const { ReportManagementError } = require("./report-manager");
 const { playerChoices, resolvePlayer } = require("./search-commands");
 const { isParticipant, isLeagueManager, currentMember, actorOf } = require("./permissions");
+const { causedError } = require("./diagnostics");
 
 const managementCommands = [
   { name: "report-entfernen", description: "Gespeicherten Report finden und löschen, auch wenn der Post schon fehlt",
@@ -54,13 +55,15 @@ function checkChannelAccess(interaction, channel, privateMemberVerified = false,
 
 async function resolveChannel(interaction, record) {
   let channel;
-  try { channel = await interaction.guild.channels.fetch(record.channelId); } catch {
-    throw new ReportManagementError("Der Ergebniskanal konnte nicht geladen werden. Bitte Zugriff und Kanal-ID prüfen.");
+  try { channel = await interaction.guild.channels.fetch(record.channelId); } catch (error) {
+    throw causedError(ReportManagementError, "Der Ergebniskanal konnte nicht geladen werden. Bitte Zugriff und Kanal-ID prüfen.",
+      error, { guildId: record.guildId, channelId: record.channelId, reportId: record.id });
   }
   if (channel?.type === ChannelType.PrivateThread &&
       !channel.permissionsFor(interaction.member)?.has(PermissionFlagsBits.ManageThreads)) {
-    try { await channel.members.fetch({ member: interaction.user.id, force: true }); } catch {
-      throw new ReportManagementError("Du hast keinen Zugriff auf diesen privaten Thread.");
+    try { await channel.members.fetch({ member: interaction.user.id, force: true }); } catch (error) {
+      throw causedError(ReportManagementError, "Du hast keinen Zugriff auf diesen privaten Thread.", error,
+        { guildId: record.guildId, channelId: record.channelId, reportId: record.id });
     }
     return checkChannelAccess(interaction, channel, true);
   }
@@ -274,8 +277,9 @@ async function correctionData(interaction, record, roleId, settingsStore) {
     const previous = record.players.find((player) => player.id === id);
     if (previous) return previous;
     let member;
-    try { member = await interaction.guild.members.fetch({ user: id, force: true }); } catch {
-      throw new ReportManagementError("Ein neu ausgewählter Teilnehmer konnte nicht geladen werden. Bitte das Formular erneut öffnen.");
+    try { member = await interaction.guild.members.fetch({ user: id, force: true }); } catch (error) {
+      throw causedError(ReportManagementError, "Ein neu ausgewählter Teilnehmer konnte nicht geladen werden. Bitte das Formular erneut öffnen.",
+        error, { guildId: record.guildId, channelId: record.channelId, reportId: record.id });
     }
     if (member.user.bot || !member.roles.cache.has(roleId)) throw new ReportManagementError("Neu ausgewählte Personen müssen die Teilnehmerrolle haben.");
     return { id: member.id, name: member.displayName };

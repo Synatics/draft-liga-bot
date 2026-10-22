@@ -2,6 +2,7 @@ const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = requi
 const { dirname } = require("node:path");
 const { randomBytes, randomUUID, createHash } = require("node:crypto");
 const { EmbedBuilder } = require("discord.js");
+const { causedError } = require("./diagnostics");
 
 class MatchStoreError extends Error {}
 
@@ -143,7 +144,8 @@ class MatchStore {
       this.matches = data.matches;
     } catch (error) {
       if (error.code !== "ENOENT") {
-        throw new MatchStoreError(`Das Replay-Archiv konnte nicht gelesen werden: ${error.message}`);
+        throw causedError(MatchStoreError, "Das Replay-Archiv konnte nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
+          error, { operation: "archive.read", file: storage ? "liga.sqlite" : "matches.json" });
       }
       // Check the data directory before the bot accepts its first report.
       this.save([]);
@@ -151,8 +153,13 @@ class MatchStore {
   }
 
   list(guildId, season) {
-    return this.storage ? this.storage.listMatches(guildId, season) :
-      structuredClone(this.matches.filter((match) => match.guildId === guildId && (season === undefined || match.season === season)));
+    try {
+      return this.storage ? this.storage.listMatches(guildId, season) :
+        structuredClone(this.matches.filter((match) => match.guildId === guildId && (season === undefined || match.season === season)));
+    } catch (error) {
+      throw causedError(MatchStoreError, "Das Replay-Archiv konnte nicht gelesen werden. Bitte den Datenspeicher prüfen.",
+        error, { operation: "archive.read", file: "liga.sqlite", guildId, season });
+    }
   }
 
   get(id, guildId) {
@@ -181,7 +188,7 @@ class MatchStore {
     if (match.reporter) record.reporter = structuredClone(match.reporter);
     if (match.result) record.result = structuredClone(match.result);
     if (match.reporter) record.createdAt = new Date().toISOString();
-    this.save([...this.matches, record]);
+    this.save([...this.matches, record], undefined, record);
     return structuredClone(record);
   }
 
@@ -197,7 +204,7 @@ class MatchStore {
         (sameMatch(entry, change.target) || (entry.change?.kind === "edit" && sameMatch(entry.change.target, change.target))))) {
       throw new MatchStoreError("Für diese Angaben existiert bereits ein anderer Report. Bitte prüfe die Season, den Spieltag und den Replay-Link.");
     }
-    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, change: operation } : entry));
+    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, change: operation } : entry), undefined, match);
   }
 
   finishChange(id, guildId, cancel = false, actor) {
@@ -218,7 +225,7 @@ class MatchStore {
       id: `${id}:edited:${record.revision}`, action: "edited", guildId, season: record.season,
       channelId: record.channelId, reportId: id, messageId: record.publication.messageId,
       actor: change.actor || actor || null, before: snapshot(previous), after: snapshot(record),
-    });
+    }, match);
   }
 
   setPublication(id, publication) {
@@ -238,18 +245,20 @@ class MatchStore {
     this.save(matches, publication.status !== "published" ? undefined : {
       id: `${id}:created`, action: "created", guildId: record.guildId, season: record.season, channelId: record.channelId,
       reportId: id, messageId: publication.messageId, actor: record.reporter || null, before: null, after: snapshot(record),
-    });
+    }, record);
   }
 
   markControlsInstalled(id, guildId) {
-    this.get(id, guildId);
-    this.save(this.matches.map((record) => record.id === id ? { ...record, controlsVersion: 1 } : record));
+    const record = this.get(id, guildId);
+    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, controlsVersion: 1 } : entry), undefined, record);
   }
 
-  save(matches, event) {
+  save(matches, event, record = event) {
+    const context = { ...record, operation: "archive.write", file: this.storage ? "liga.sqlite" : "matches.json",
+      reportId: record?.reportId || record?.id, messageId: record?.messageId || record?.publication?.messageId };
     if (this.storage) {
-      try { this.storage.saveMatches(matches, event); } catch {
-        throw new MatchStoreError("Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen.");
+      try { this.storage.saveMatches(matches, event); } catch (error) {
+        throw causedError(MatchStoreError, "Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen.", error, context);
       }
       this.matches = structuredClone(matches);
       return;
@@ -259,9 +268,9 @@ class MatchStore {
       mkdirSync(dirname(this.filePath), { recursive: true });
       writeFileSync(temporaryPath, JSON.stringify({ version: 1, matches }, null, 2) + "\n", { flag: "wx" });
       renameSync(temporaryPath, this.filePath);
-    } catch {
+    } catch (error) {
       try { unlinkSync(temporaryPath); } catch { /* No temporary file may have been created. */ }
-      throw new MatchStoreError("Das Replay konnte nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.");
+      throw causedError(MatchStoreError, "Das Replay konnte nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.", error, context);
     }
     this.matches = matches;
   }

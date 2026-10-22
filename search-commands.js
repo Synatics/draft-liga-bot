@@ -1,4 +1,5 @@
 const { ChannelType, MessageFlags, PermissionFlagsBits, escapeMarkdown } = require("discord.js");
+const { logError, interactionContext } = require("./diagnostics");
 
 class SearchError extends Error {}
 
@@ -109,7 +110,8 @@ async function handleSearchCommand(interaction, store) {
       delivered++;
     } catch (error) {
       const blocked = [50007, 50278].includes(Number(error.code));
-      if (!blocked) console.error("Fehler beim Senden der Suchergebnisse per DM:", error);
+      if (!blocked) logError("Fehler beim Senden der Suchergebnisse per DM:", error,
+        { ...interactionContext(interaction), season, operation: "search.dm" });
       const progress = delivered ? `${delivered} von ${messages.length} Nachrichten wurden zugestellt. ` : "";
       const hint = blocked
         ? "Bitte erlaube Direktnachrichten von Servermitgliedern und prüfe, ob du den Bot blockiert hast."

@@ -4,6 +4,7 @@ const { dirname, join } = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 const { parseSettingsDocument } = require("./league-settings");
 const { parseMatchesDocument, matchData, snapshot } = require("./match-store");
+const { causedError } = require("./diagnostics");
 
 const DATABASE_NAME = "liga.sqlite";
 const APPLICATION_ID = 0x444C424F;
@@ -57,7 +58,9 @@ class LigaDatabase {
       }
       this.validate();
     } catch (error) {
-      this.db.close();
+      try { this.db.close(); } catch (closeError) {
+        throw new AggregateError([error, closeError], "Datenbank konnte nach einem Fehler nicht geschlossen werden.", { cause: error });
+      }
       throw error;
     }
   }
@@ -69,7 +72,9 @@ class LigaDatabase {
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
-      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      try { if (this.db.isTransaction) this.db.exec("ROLLBACK"); } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Datenbankvorgang und Rollback sind fehlgeschlagen.", { cause: error });
+      }
       throw error;
     }
   }
@@ -79,10 +84,20 @@ class LigaDatabase {
     const texts = new Map();
     for (const name of ["league-settings.json", "matches.json"]) {
       const path = join(directory, name);
-      if (existsSync(path)) texts.set(name, readFileSync(path, "utf8"));
+      try { if (existsSync(path)) texts.set(name, readFileSync(path, "utf8")); } catch (error) {
+        throw causedError(Error, "Die JSON-Daten konnten nicht für die Übernahme gelesen werden.",
+          error, { file: name, operation: name === "matches.json" ? "archive.read" : "settings.read" });
+      }
     }
-    const settings = texts.has("league-settings.json") ? parseSettingsDocument(texts.get("league-settings.json")) : { guilds: {} };
-    const matches = texts.has("matches.json") ? parseMatchesDocument(texts.get("matches.json")).matches : [];
+    const parse = (name, parser, fallback) => {
+      if (!texts.has(name)) return fallback;
+      try { return parser(texts.get(name)); } catch (error) {
+        throw causedError(Error, "Die JSON-Daten für die Übernahme sind ungültig.",
+          error, { file: name, operation: name === "matches.json" ? "archive.read" : "settings.read" });
+      }
+    };
+    const settings = parse("league-settings.json", parseSettingsDocument, { guilds: {} });
+    const matches = parse("matches.json", parseMatchesDocument, { matches: [] }).matches;
     // Keep a separate, validated pre-migration copy; the original JSON is never overwritten.
     if (texts.size) {
       const backup = join(directory, `migration-json-${this.now().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`);

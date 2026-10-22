@@ -114,8 +114,16 @@ test("an audit write failure rolls back the report change and retries the same p
     return { author: { id: BOT }, async delete() { deletes++; } };
   } } };
   const write = db.writeEvent.bind(db);
-  db.writeEvent = () => { throw new Error("Disk full"); };
-  await assert.rejects(new ReportManager(store).apply(record.id, GUILD, channel, BOT, { kind: "delete" }, revisionOf(store.get(record.id, GUILD)), MAX), /Archiv konnte nicht aktualisiert/);
+  const diskError = Object.assign(new Error("private audit request details"), { code: "ENOSPC" });
+  db.writeEvent = () => { throw diskError; };
+  await assert.rejects(new ReportManager(store).apply(record.id, GUILD, channel, BOT, { kind: "delete" }, revisionOf(store.get(record.id, GUILD)), MAX), (error) => {
+    assert.match(error.message, /Archiv konnte nicht aktualisiert/);
+    assert.equal(error.cause.cause, diskError);
+    assert.equal(error.context.reportId, record.id);
+    assert.equal(error.context.channelId, CHANNEL);
+    assert.ok(!error.message.includes("private audit request details"));
+    return true;
+  });
   assert.equal(db.auditEvents(GUILD, 4).length, 1);
   assert.equal(db.listMatches(GUILD)[0].change.kind, "delete");
   db.writeEvent = write;

@@ -6,6 +6,7 @@ const { Events, Routes } = require("discord.js");
 const { LeagueSettingsStore, settingsFilePath } = require("./league-settings");
 const { MatchStore } = require("./match-store");
 const { LigaDatabase, DATABASE_NAME } = require("./database");
+const { causedError, logError } = require("./diagnostics");
 
 const STARTUP_TIMEOUT_MS = 60_000;
 const CLEANUP_TIMEOUT_MS = 5_000;
@@ -46,8 +47,9 @@ function verifyDataDirectory(directory) {
     ownedPath = renamed;
     unlinkSync(renamed);
     ownedPath = undefined;
-  } catch {
-    throw new StartupError("Der Datenordner ist nicht beschreibbar. Bitte Pfad, Dateirechte und freien Speicher bzw. das Railway-Volume prüfen.");
+  } catch (error) {
+    throw causedError(StartupError, "Der Datenordner ist nicht beschreibbar. Bitte Pfad, Dateirechte und freien Speicher bzw. das Railway-Volume prüfen.",
+      error, { operation: "storage.check" });
   } finally {
     if (ownedPath) try { unlinkSync(ownedPath); } catch { /* Only this startup probe is cleaned up. */ }
   }
@@ -56,7 +58,7 @@ function verifyDataDirectory(directory) {
 function prepareStartup(env = process.env) {
   const config = readConfiguration(env);
   let settingsPath;
-  try { settingsPath = settingsFilePath(env); } catch (error) { throw new StartupError(error.message); }
+  try { settingsPath = settingsFilePath(env); } catch (error) { throw causedError(StartupError, error.message, error, { operation: "storage.check" }); }
   verifyDataDirectory(dirname(settingsPath));
   const databasePath = join(dirname(settingsPath), DATABASE_NAME);
   let database;
@@ -65,9 +67,12 @@ function prepareStartup(env = process.env) {
     const settingsStore = new LeagueSettingsStore(databasePath, () => new Date(), database);
     const matchStore = new MatchStore(databasePath, database);
     return { config, settingsPath, databasePath, database, settingsStore, matchStore };
-  } catch {
-    database?.close();
-    throw new StartupError("Die SQLite-Datenbank bzw. die bisherigen Liga-Einstellungen und das Replay-Archiv konnten nicht geladen werden. Bitte liga.sqlite, league-settings.json, matches.json und die Dateirechte prüfen oder ein Backup wiederherstellen. Vorhandene Daten werden nicht zurückgesetzt.");
+  } catch (error) {
+    try { database?.close(); } catch (closeError) {
+      error = new AggregateError([error, closeError], "Datenspeicher konnte weder geladen noch geschlossen werden.", { cause: error });
+    }
+    throw causedError(StartupError, "Die SQLite-Datenbank bzw. die bisherigen Liga-Einstellungen und das Replay-Archiv konnten nicht geladen werden. Bitte liga.sqlite, league-settings.json, matches.json und die Dateirechte prüfen oder ein Backup wiederherstellen. Vorhandene Daten werden nicht zurückgesetzt.",
+      error, { operation: "database.open", file: "liga.sqlite" });
   }
 }
 
@@ -101,8 +106,9 @@ async function connectDiscord(client, rest, commands, config, { logger = console
     await withTimeout(async () => {
       try {
         await rest.put(Routes.applicationCommands(config.clientId), { body: commands, signal: controller.signal });
-      } catch {
-        throw new StartupError("Slash-Befehle konnten nicht registriert werden. Bitte CLIENT_ID, das zugehörige DISCORD_TOKEN und die Verbindung zu Discord prüfen.");
+      } catch (error) {
+        throw causedError(StartupError, "Slash-Befehle konnten nicht registriert werden. Bitte CLIENT_ID, das zugehörige DISCORD_TOKEN und die Verbindung zu Discord prüfen.",
+          error, { operation: "discord.register" });
       }
       controller.signal.throwIfAborted();
       logger.log(`✅ Discord-Befehle registriert: ${commands.map((command) => command.type === 3
@@ -112,7 +118,7 @@ async function connectDiscord(client, rest, commands, config, { logger = console
       try {
         await Promise.all([Promise.resolve().then(() => client.login(config.token)), ready]);
       } catch (error) {
-        throw new StartupError(loginFailure(error));
+        throw causedError(StartupError, loginFailure(error), error, { operation: "discord.login" });
       }
     }, timeoutMs, "Der Discord-Start wurde nach 60 Sekunden abgebrochen. Bitte die Verbindung zu Discord und die Zugangsdaten prüfen.");
   } finally {
@@ -124,11 +130,12 @@ async function connectDiscord(client, rest, commands, config, { logger = console
 
 async function failStartup(error, client, { logger = console, runtime = process, timeoutMs = CLEANUP_TIMEOUT_MS } = {}) {
   runtime.exitCode = 1;
-  // Raw Discord errors can include request data. Only controlled startup messages reach the log.
-  logger.error(`❌ Bot-Start abgebrochen: ${error instanceof StartupError ? error.message : "Unerwarteter Fehler beim Initialisieren. Bitte Konfiguration und Datenspeicher prüfen."}`);
+  logError(`❌ Bot-Start abgebrochen: ${error instanceof StartupError ? error.message : "Unerwarteter Fehler beim Initialisieren. Bitte Konfiguration und Datenspeicher prüfen."}`,
+    error, {}, logger);
   if (client) {
-    try { await withTimeout(() => client.destroy(), timeoutMs, "Discord-Verbindung konnte nicht rechtzeitig geschlossen werden."); } catch {
-      logger.error("Die Discord-Verbindung konnte beim Startabbruch nicht regulär geschlossen werden; der Prozess wird beendet.");
+    try { await withTimeout(() => client.destroy(), timeoutMs, "Discord-Verbindung konnte nicht rechtzeitig geschlossen werden."); } catch (closeError) {
+      logError("Die Discord-Verbindung konnte beim Startabbruch nicht regulär geschlossen werden; der Prozess wird beendet.",
+        closeError, { operation: "discord.close" }, logger);
     }
   }
   runtime.exit(1);
