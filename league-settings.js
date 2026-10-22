@@ -87,12 +87,13 @@ function settingsFilePath(env = process.env) {
 }
 
 class LeagueSettingsStore {
-  constructor(filePath, now = () => new Date()) {
+  constructor(filePath, now = () => new Date(), storage) {
     this.filePath = filePath;
+    this.storage = storage;
     this.now = now;
     this.guilds = {};
     try {
-      const data = parseSettingsDocument(readFileSync(filePath, "utf8"));
+      const data = parseSettingsDocument(storage ? storage.readSettings() : readFileSync(filePath, "utf8"));
       this.guilds = data.guilds;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -124,6 +125,13 @@ class LeagueSettingsStore {
   save(guildId, settings) {
     validateSettings(settings);
     const guilds = { ...this.guilds, [guildId]: { ...settings } };
+    if (this.storage) {
+      try { this.storage.saveSettings(guilds); } catch {
+        throw new LeagueSettingsError("Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden.");
+      }
+      this.guilds = guilds;
+      return this.get(guildId);
+    }
     const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
     try {
       mkdirSync(dirname(this.filePath), { recursive: true });

@@ -15,9 +15,9 @@ const searchCommand = {
   ],
 };
 
-function visibleMatches(interaction, store) {
+function visibleMatches(interaction, store, season) {
   if (!interaction.guild) return [];
-  return store.list(interaction.guild.id).filter((match) => {
+  return store.list(interaction.guild.id, season).filter((match) => {
     const channel = interaction.guild.channels.cache.get(match.channelId);
     const permissions = channel?.permissionsFor(interaction.member);
     if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) return false;
@@ -79,7 +79,7 @@ async function handleSearchAutocomplete(interaction, store) {
   const season = interaction.options.getInteger("season");
   const focused = interaction.options.getFocused(true);
   const choices = focused.name === "name" && season
-    ? playerChoices(visibleMatches(interaction, store), season, String(focused.value)) : [];
+    ? playerChoices(visibleMatches(interaction, store, season), season, String(focused.value)) : [];
   await interaction.respond(choices);
 }
 
@@ -92,7 +92,7 @@ async function handleSearchCommand(interaction, store) {
       (matchday !== null && matchday !== undefined && (!Number.isInteger(matchday) || matchday < 1 || matchday > 25))) {
     throw new SearchError("Bitte wähle eine Season zwischen 1 und 9999 und optional einen Spieltag zwischen 1 und 25.");
   }
-  const matches = visibleMatches(interaction, store);
+  const matches = visibleMatches(interaction, store, season);
   const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
   const found = player ? matches.filter((match) => match.season === season &&
     (matchday == null || match.matchday === matchday) && match.players.some((entry) => entry.id === player.id)) : [];

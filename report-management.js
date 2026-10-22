@@ -1,5 +1,5 @@
 const {
-  ActionRowBuilder, ApplicationCommandType, ButtonBuilder, ButtonStyle, ChannelType,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
   LabelBuilder, MessageFlags, ModalBuilder, PermissionFlagsBits, StringSelectMenuBuilder,
   TextInputBuilder, TextInputStyle, escapeMarkdown,
 } = require("discord.js");
@@ -7,10 +7,9 @@ const { matchData, normalizeReplayLink, revisionOf } = require("./match-store");
 const { createResultMessage } = require("./reports");
 const { ReportManagementError } = require("./report-manager");
 const { playerChoices, resolvePlayer } = require("./search-commands");
+const { isLeagueManager, currentMember, actorOf } = require("./permissions");
 
 const managementCommands = [
-  { name: "Report korrigieren", type: ApplicationCommandType.Message, contexts: [0] },
-  { name: "Report löschen", type: ApplicationCommandType.Message, contexts: [0] },
   { name: "report-entfernen", description: "Gespeicherten Report finden und löschen, auch wenn der Post schon fehlt",
     contexts: [0], options: [
       { name: "season", description: "Welche Season?", type: 4, required: true, min_value: 1, max_value: 9999 },
@@ -29,19 +28,21 @@ function maximumMatchday(record, settingsStore) {
   return settings?.season === record.season ? settings.matchdays : 25;
 }
 
-function canManage(interaction, record) {
-  return interaction.guild?.id === record.guildId && (record.players.some((player) => player.id === interaction.user.id) ||
-    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+function canManage(interaction, record, action, managerRoleId, member = interaction.member) {
+  return interaction.guild?.id === record.guildId && (isLeagueManager(interaction, managerRoleId, member) ||
+    (action === "edit" && record.reporter?.id === interaction.user.id));
 }
 
-function authorize(interaction, record) {
-  if (!canManage(interaction, record)) {
-    throw new ReportManagementError("Nur die beiden Match-Teilnehmer oder Personen mit „Server verwalten“ dürfen diesen Report ändern oder löschen.");
+function authorize(interaction, record, action, managerRoleId, member) {
+  if (!canManage(interaction, record, action, managerRoleId, member)) {
+    throw new ReportManagementError(action === "edit"
+      ? "Nur die meldende Person, die Ligaverwaltung und Serververwalter dürfen diesen Report bearbeiten. Bei älteren Reports ist die meldende Person eventuell unbekannt."
+      : "Nur die Ligaverwaltung und Serververwalter dürfen Reports löschen oder das Archiv bereinigen.");
   }
 }
 
-function checkChannelAccess(interaction, channel, privateMemberVerified = false) {
-  const permissions = channel?.permissionsFor(interaction.member);
+function checkChannelAccess(interaction, channel, privateMemberVerified = false, member = interaction.member) {
+  const permissions = channel?.permissionsFor(member);
   if (channel?.guildId !== interaction.guild.id ||
       !permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]) ||
       (channel.type === ChannelType.PrivateThread && !permissions.has(PermissionFlagsBits.ManageThreads) &&
@@ -86,7 +87,7 @@ function correctionOptions(guild, record, roleId) {
 }
 
 function correctionModal(interaction, record, roleId, settingsStore) {
-  const message = interaction.targetMessage || interaction.message;
+  const message = interaction.message;
   const fields = message?.embeds?.[0]?.fields || [];
   const options = correctionOptions(interaction.guild, record, roleId);
   const playerSelect = (id, label, field) => {
@@ -129,10 +130,10 @@ function deletionPrompt(interaction, record) {
   };
 }
 
-async function removableMatches(interaction, store) {
+async function removableMatches(interaction, store, managerRoleId) {
   if (!interaction.guild) return [];
   const matches = store.list(interaction.guild.id).filter((match) =>
-    match.publication?.status === "published" && canManage(interaction, match));
+    match.publication?.status === "published" && canManage(interaction, match, "delete", managerRoleId));
   // Verify each result channel once, including current private-thread membership.
   const access = new Map(await Promise.all([...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
     try {
@@ -146,11 +147,11 @@ async function removableMatches(interaction, store) {
   return matches.filter((match) => access.get(match.channelId));
 }
 
-async function handleRemovalAutocomplete(interaction, store) {
+async function handleRemovalAutocomplete(interaction, store, managerRoleId) {
   const season = interaction.options.getInteger("season");
   const focused = interaction.options.getFocused(true);
   await interaction.respond(focused.name === "name" && season
-    ? playerChoices(await removableMatches(interaction, store), season, String(focused.value)) : []);
+    ? playerChoices(await removableMatches(interaction, store, managerRoleId), season, String(focused.value)) : []);
 }
 
 const matchingRemovals = (matches, query) => matches.filter((match) => match.season === query.season &&
@@ -180,7 +181,8 @@ function removalPicker(interaction, matches, query, requestedPage = 0) {
   };
 }
 
-async function openRemoval(interaction, store) {
+async function openRemoval(interaction, store, managerRoleId) {
+  if (!isLeagueManager(interaction, managerRoleId)) throw new ReportManagementError("Nur die Ligaverwaltung und Serververwalter dürfen das Archiv bereinigen.");
   await interaction.deferReply(privateReply);
   const season = interaction.options.getInteger("season", true);
   const matchday = interaction.options.getInteger("spieltag");
@@ -188,7 +190,7 @@ async function openRemoval(interaction, store) {
       (matchday != null && (!Number.isInteger(matchday) || matchday < 1 || matchday > 25))) {
     throw new ReportManagementError("Bitte eine Season von 1–9999 und optional einen Spieltag von 1–25 auswählen.");
   }
-  const matches = await removableMatches(interaction, store);
+  const matches = await removableMatches(interaction, store, managerRoleId);
   const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
   const query = { season, matchday, playerId: player?.id };
   const found = matchingRemovals(matches, query);
@@ -196,7 +198,7 @@ async function openRemoval(interaction, store) {
   await interaction.editReply(prompt);
 }
 
-async function handleRemovalComponent(interaction, store) {
+async function handleRemovalComponent(interaction, store, managerRoleId) {
   const parsed = /^manage:(pick|page|stop):(\d{17,20})(?::([1-9]\d{0,3}):(\d{17,20}):(\d{1,2}):(\d{1,6}))?$/.exec(interaction.customId);
   if (!parsed || parsed[2] !== interaction.user.id || !interaction.guild) {
     throw new ReportManagementError("Diese Auswahl gehört zu einer anderen Person oder ist ungültig. Bitte /report-entfernen erneut verwenden.");
@@ -210,7 +212,7 @@ async function handleRemovalComponent(interaction, store) {
     const selected = interaction.values?.length === 1 && /^([a-f0-9]{24}):([a-f0-9]{16})$/.exec(interaction.values[0]);
     if (!selected) throw new ReportManagementError("Bitte genau einen Report aus der Liste auswählen.");
     const record = store.get(selected[1], interaction.guild.id);
-    authorize(interaction, record);
+    authorize(interaction, record, "delete", managerRoleId);
     if (revisionOf(record) !== selected[2]) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte /report-entfernen erneut verwenden.");
     await interaction.deferUpdate();
     await resolveChannel(interaction, record);
@@ -221,32 +223,40 @@ async function handleRemovalComponent(interaction, store) {
   if (!season || Number(matchday) > 25) throw new ReportManagementError("Diese Auswahl ist ungültig. Bitte /report-entfernen erneut verwenden.");
   await interaction.deferUpdate();
   const query = { season: Number(season), playerId, matchday: Number(matchday) };
-  const matches = matchingRemovals(await removableMatches(interaction, store), query);
+  const matches = matchingRemovals(await removableMatches(interaction, store, managerRoleId), query);
   await interaction.editReply(removalPicker(interaction, matches, query, Number(page)));
 }
 
-async function openManagement(interaction, store, manager, roleId, settingsStore) {
+async function openManagement(interaction, store, manager, roleId, settingsStore, managerRoleId) {
   if (!interaction.guild) throw new ReportManagementError("Bitte verwende die Aktion auf dem Liga-Server.");
   if (interaction.commandName === "report-entfernen") {
-    await openRemoval(interaction, store);
+    await openRemoval(interaction, store, managerRoleId);
     return;
   }
-  const message = interaction.targetMessage;
+  const button = /^report:(edit|delete):([a-f0-9]{24})$/.exec(interaction.customId);
+  if (!button) throw new ReportManagementError("Bitte die Buttons direkt am Ergebnispost verwenden.");
+  const action = button[1];
+  const message = interaction.message;
   if (message?.author?.id !== interaction.client.user.id || message.webhookId) {
     throw new ReportManagementError("Bitte die Aktion direkt an einem Ergebnispost dieses Bots öffnen.");
   }
   const record = store.findByMessage(interaction.guild.id, interaction.channelId, message.id);
-  authorize(interaction, record);
+  if (record.id !== button[2]) throw new ReportManagementError("Dieser Button gehört zu einem anderen Report.");
+  authorize(interaction, record, action, managerRoleId);
   checkChannelAccess(interaction, interaction.channel);
-  if (interaction.commandName === "Report löschen") {
+  if (action === "delete") {
     await interaction.reply(deletionPrompt(interaction, record));
   } else if (record.change) {
     if (record.change.kind === "delete") {
-      throw new ReportManagementError("Für diesen Report ist eine Löschung vorgemerkt. Bitte „Report löschen“ öffnen und die Löschung bestätigen, um sie abzuschließen.");
+      throw new ReportManagementError("Für diesen Report ist eine Löschung vorgemerkt. Bitte den Löschen-Button verwenden und die Löschung bestätigen.");
     }
     await interaction.deferReply(privateReply);
     const channel = await resolveChannel(interaction, record);
-    const kind = await manager.apply(record.id, record.guildId, channel, interaction.client.user.id);
+    const member = await currentMember(interaction);
+    authorize(interaction, store.get(record.id, record.guildId), action, managerRoleId, member);
+    checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
+    const kind = await manager.apply(record.id, record.guildId, channel, interaction.client.user.id,
+      undefined, undefined, actorOf(interaction, member));
     await interaction.editReply({ content: kind === "delete" ? "✅ Die vorgemerkte Löschung wurde abgeschlossen."
       : "✅ Die vorgemerkte Korrektur wurde abgeschlossen. Für weitere Änderungen die Aktion erneut öffnen.", allowedMentions: { parse: [] } });
   } else {
@@ -280,15 +290,20 @@ async function correctionData(interaction, record, roleId, settingsStore) {
   const season = record.season;
   const score = interaction.fields.getTextInputValue("score");
   if (typeof score !== "string" || !score.trim() || score.length > 100) throw new ReportManagementError("Bitte ein Ergebnis mit höchstens 100 Zeichen eingeben.");
-  const target = matchData({ ...record, id: undefined, publication: undefined, change: undefined, revision: undefined,
+  const target = matchData({ ...record, id: undefined, publication: undefined, change: undefined, revision: undefined, result: undefined,
     season, matchday, players, link: normalizeReplayLink(interaction.fields.getTextInputValue("link")) });
   const message = createResultMessage(players[0].name, players[1].name, score, target.link, { season, matchday });
-  return { kind: "edit", target, embed: message.embeds[0].toJSON() };
+  return { kind: "edit", target, embed: message.embeds[0].toJSON(),
+    result: { winnerId: players[0].id, loserId: players[1].id, score } };
 }
 
-async function handleManagementComponent(interaction, store, manager, roleId, settingsStore) {
+async function handleManagementComponent(interaction, store, manager, roleId, settingsStore, managerRoleId) {
+  if (interaction.customId?.startsWith("report:")) {
+    await openManagement(interaction, store, manager, roleId, settingsStore, managerRoleId);
+    return;
+  }
   if (/^manage:(pick|page|stop):/.test(interaction.customId)) {
-    await handleRemovalComponent(interaction, store);
+    await handleRemovalComponent(interaction, store, managerRoleId);
     return;
   }
   const parsed = /^manage:(edit|delete|cancel):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})$/.exec(interaction.customId);
@@ -299,15 +314,17 @@ async function handleManagementComponent(interaction, store, manager, roleId, se
     return;
   }
   const record = store.get(id, interaction.guild?.id);
-  authorize(interaction, record);
+  authorize(interaction, record, action, managerRoleId);
   if (revisionOf(record) !== revision) throw new ReportManagementError("Dieser Report wurde inzwischen geändert. Bitte die Aktion erneut öffnen.");
   if (action === "edit") await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
   const channel = await resolveChannel(interaction, record);
   const change = action === "edit" ? await correctionData(interaction, record, roleId, settingsStore) : { kind: "delete" };
   // Recheck after asynchronous channel/member lookups; the store also verifies the revision.
-  authorize(interaction, store.get(id, record.guildId));
-  const kind = await manager.apply(id, record.guildId, channel, interaction.client.user.id, change, revision);
+  const member = await currentMember(interaction);
+  authorize(interaction, store.get(id, record.guildId), action, managerRoleId, member);
+  checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
+  const kind = await manager.apply(id, record.guildId, channel, interaction.client.user.id, change, revision, actorOf(interaction, member));
   await interaction.editReply({ content: kind === "delete" ? "✅ Report und Suchtreffer wurden entfernt."
     : `✅ Report korrigiert: **Season ${change.target.season} · Spieltag ${change.target.matchday}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
     components: [], embeds: [], allowedMentions: { parse: [] } });

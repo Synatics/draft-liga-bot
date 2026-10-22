@@ -1,4 +1,5 @@
 const { MatchStoreError } = require("./match-store");
+const { reportButtons } = require("./report-buttons");
 
 class ReportManagementError extends Error {}
 
@@ -8,7 +9,7 @@ class ReportManager {
     this.inFlight = new Set();
   }
 
-  async apply(id, guildId, channel, botId, change, expectedRevision) {
+  async apply(id, guildId, channel, botId, change, expectedRevision, actor) {
     if (this.inFlight.has(id)) throw new ReportManagementError("Dieser Report wird gerade geändert. Bitte warte kurz.");
     this.inFlight.add(id);
     try {
@@ -17,7 +18,7 @@ class ReportManager {
       if (channel.id !== previous.channelId || channel.guildId !== guildId) {
         throw new ReportManagementError("Der Ergebnispost gehört nicht zu diesem Server oder Kanal.");
       }
-      if (change) this.store.beginChange(id, guildId, expectedRevision, change);
+      if (change) this.store.beginChange(id, guildId, expectedRevision, change, actor);
       const record = this.store.get(id, guildId);
       if (!record.change) throw new ReportManagementError("Für diesen Report ist keine Änderung vorgemerkt.");
       try {
@@ -29,7 +30,7 @@ class ReportManager {
           throw new ReportManagementError("Es können nur eigene Ergebnisposts des Bots geändert werden.");
         }
         if (record.change.kind === "edit") {
-          await message.edit({ content: "", embeds: [record.change.embed], allowedMentions: { parse: [] } });
+          await message.edit({ content: "", embeds: [record.change.embed], components: reportButtons(id), allowedMentions: { parse: [] } });
         } else if (message) {
           try { await message.delete(); } catch (error) { if (Number(error.code) !== 10008) throw error; }
         }
@@ -46,7 +47,7 @@ class ReportManager {
         }
         throw new ReportManagementError("Der Ausgang der Änderung ist unklar. Sie bleibt gespeichert. Bitte dieselbe Aktion erneut am Post öffnen; der Bot wiederholt sie am bestehenden Post.");
       }
-      try { this.store.finishChange(id, guildId); } catch (error) {
+      try { this.store.finishChange(id, guildId, false, actor); } catch (error) {
         if (!(error instanceof MatchStoreError)) throw error;
         throw new ReportManagementError("Der Discord-Post wurde geändert, aber das Archiv konnte nicht aktualisiert werden. Bitte den Speicher prüfen und dieselbe Aktion erneut öffnen, um die gespeicherte Änderung abzuschließen.");
       }

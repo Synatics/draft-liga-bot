@@ -10,6 +10,7 @@ const { ReportPublisher } = require("./report-publisher");
 const { createResultMessage } = require("./reports");
 const { resultMessages, handleSearchCommand } = require("./search-commands");
 const { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete, correctionModal } = require("./report-management");
+const { installReportButtons } = require("./report-buttons");
 
 const GUILD = "300000000000000001", CHANNEL = "400000000000000001", MESSAGE = "500000000000000001";
 const JAN = "200000000000000001", MAX = "200000000000000002", OTHER = "200000000000000003";
@@ -25,7 +26,8 @@ function setup(t) {
   const filePath = join(directory, "matches.json");
   const store = new MatchStore(filePath);
   const data = { guildId: GUILD, channelId: CHANNEL, season: 4, matchday: 1,
-    players: [{ id: JAN, name: "Jan" }, { id: MAX, name: "Max" }], link: "https://example.org/original" };
+    players: [{ id: JAN, name: "Jan" }, { id: MAX, name: "Max" }], link: "https://example.org/original",
+    reporter: { id: JAN, name: "Jan" }, result: { winnerId: JAN, loserId: MAX, score: "2-0" } };
   const record = store.add(data);
   store.setPublication(record.id, { status: "sending" });
   store.setPublication(record.id, { status: "published", messageId: MESSAGE });
@@ -63,8 +65,8 @@ function setup(t) {
   const settings = { get: () => ({ season: 4, matchdays: 9 }) };
   const interaction = (overrides = {}) => ({
     guild, channel, channelId: CHANNEL, client: { user: { id: BOT } },
-    member: members.get(JAN), memberPermissions: permissions(), user: { id: JAN }, targetMessage: message,
-    commandName: "Report korrigieren",
+    member: members.get(JAN), memberPermissions: permissions(), user: { id: JAN },
+    message, customId: `report:edit:${record.id}`,
     async showModal(modal) { this.modal = modal.toJSON(); },
     async reply(payload) { this.response = payload; },
     async deferReply(payload) { this.deferred = true; this.defer = payload; },
@@ -74,7 +76,7 @@ function setup(t) {
   });
   const current = () => store.get(record.id, GUILD);
   const change = (overrides = {}, score = "1-0") => {
-    const target = matchData({ ...data, matchday: 2, link: "https://example.org/corrected", ...overrides });
+    const target = matchData({ ...data, result: undefined, matchday: 2, link: "https://example.org/corrected", ...overrides });
     return { kind: "edit", target, embed: createResultMessage(target.players[0].name,
       target.players[1].name, score, target.link, target).embeds[0].toJSON() };
   };
@@ -85,7 +87,7 @@ function setup(t) {
       getTextInputValue: (name) => values[name] };
   };
   return { directory, filePath, store, manager, record, data, message, channel, guild, members, settings,
-    edits, deletions, fetches, interaction, current, change, apply, fields,
+    edits, deletions, fetches, interaction, admin: (overrides) => interaction({ memberPermissions: permissions(P.ManageGuild), ...overrides }), current, change, apply, fields,
     removePost() { deleted = true; }, isDeleted: () => deleted };
 }
 
@@ -96,7 +98,9 @@ const removalOptions = ({ season = 4, name = JAN, matchday = null } = {}) => ({
   getFocused: () => ({ name: "name", value: name }),
 });
 const addPublished = (f, overrides = {}, messageId = String(BigInt(MESSAGE) + BigInt(f.store.list(GUILD).length))) => {
-  const record = f.store.add({ ...f.data, ...overrides });
+  const match = { ...f.data, ...overrides };
+  if (overrides.players && !overrides.result) match.result = { winnerId: match.players[0].id, loserId: match.players[1].id, score: "2-0" };
+  const record = f.store.add(match);
   f.store.setPublication(record.id, { status: "sending" });
   f.store.setPublication(record.id, { status: "published", messageId });
   return f.store.get(record.id, record.guildId);
@@ -265,7 +269,7 @@ test("invalid persisted correction journals fail closed when loading the archive
   }
 });
 
-test("context-menu correction opens a single five-field modal with the existing day and result preselected", async (t) => {
+test("the report button opens a single five-field modal with the existing day and result preselected", async (t) => {
   const f = setup(t);
   const command = await openCorrection(f);
   assert.equal(command.response, undefined, "The action opens the modal without a preliminary message");
@@ -281,23 +285,82 @@ test("context-menu correction opens a single five-field modal with the existing 
   assert.equal(components[3].value, "2-0");
   assert.equal(components[4].value, f.data.link);
   assert.equal(f.edits.length, 0);
-  assert.equal(managementCommands.filter((entry) => entry.type === 3).length, 2);
+  assert.equal(managementCommands.filter((entry) => entry.type === 3).length, 0);
   assert.ok(managementCommands.every((entry) => entry.default_member_permissions === undefined));
 });
 
-test("match participants and server managers can manage a report, but other league members cannot", async (t) => {
+test("only the reporter and management can edit; being the other match participant grants no permission", async (t) => {
   const f = setup(t);
-  for (const id of [JAN, MAX]) {
+  for (const id of [JAN]) {
     const command = f.interaction({ user: { id } });
     await openManagement(command, f.store, f.manager, ROLE);
     assert.ok(command.modal);
   }
-  await assert.rejects(openManagement(f.interaction({ user: { id: OTHER } }), f.store, f.manager, ROLE), /Nur die beiden/);
+  for (const id of [MAX, OTHER]) await assert.rejects(openManagement(f.interaction({ user: { id } }), f.store, f.manager, ROLE), /Nur die meldende/);
   const admin = f.interaction({ user: { id: OTHER }, memberPermissions: permissions(P.ManageGuild) });
   await openManagement(admin, f.store, f.manager, ROLE);
   assert.ok(admin.modal);
   f.message.author.id = OTHER;
   await assert.rejects(openManagement(f.interaction(), f.store, f.manager, ROLE), /Ergebnispost dieses Bots/);
+});
+
+test("the manager role can edit and delete without server permissions, and a revoked role blocks final confirmation", async (t) => {
+  const f = setup(t);
+  const managerRole = "100000000000000002";
+  const member = f.members.get(OTHER);
+  member.roles.cache.set(managerRole, {});
+  member.permissions = permissions();
+  const edit = f.interaction({ user: { id: OTHER }, member });
+  await openManagement(edit, f.store, f.manager, ROLE, f.settings, managerRole);
+  assert.ok(edit.modal);
+  const remove = f.interaction({ user: { id: OTHER }, member, customId: `report:delete:${f.record.id}` });
+  await openManagement(remove, f.store, f.manager, ROLE, f.settings, managerRole);
+  const staleMember = { ...member, roles: { cache: new Collection(member.roles.cache) } };
+  member.roles.cache.delete(managerRole);
+  await assert.rejects(handleManagementComponent(f.interaction({ user: { id: OTHER }, member: staleMember,
+    customId: rows(remove.response)[0][0].custom_id }), f.store, f.manager, ROLE, f.settings, managerRole), /Nur die Ligaverwaltung/);
+  assert.equal(f.deletions.length, 0);
+  assert.equal(f.current().change, undefined);
+});
+
+test("a reporter cannot delete through either the public button, a forged confirmation or the slash fallback", async (t) => {
+  const f = setup(t);
+  for (const interaction of [f.interaction({ customId: `report:delete:${f.record.id}` }),
+    f.interaction({ customId: `manage:delete:${f.record.id}:${revisionOf(f.current())}:${JAN}` }),
+    f.interaction({ commandName: "report-entfernen", options: removalOptions() })]) {
+    await assert.rejects(interaction.commandName === "report-entfernen"
+      ? openManagement(interaction, f.store, f.manager, ROLE, f.settings)
+      : handleManagementComponent(interaction, f.store, f.manager, ROLE, f.settings), /Nur die Ligaverwaltung/);
+  }
+  assert.equal(f.deletions.length, 0);
+});
+
+test("legacy reports with unknown reporters require management, and buttons must belong to the original bot post", async (t) => {
+  const f = setup(t);
+  f.store.save([{ ...f.current(), reporter: undefined }]);
+  await assert.rejects(openManagement(f.interaction(), f.store, f.manager, ROLE), /meldende Person/);
+  const admin = f.admin();
+  await openManagement(admin, f.store, f.manager, ROLE);
+  assert.ok(admin.modal);
+  await assert.rejects(openManagement(f.admin({ customId: `report:edit:${"f".repeat(24)}` }), f.store, f.manager, ROLE), /anderen Report/);
+  f.message.webhookId = "700000000000000001";
+  await assert.rejects(openManagement(f.admin(), f.store, f.manager, ROLE), /dieses Bots/);
+});
+
+test("known older posts receive persistent buttons once; missing posts remain available for archive cleanup", async (t) => {
+  const f = setup(t);
+  f.store.save([{ ...f.current(), controlsVersion: undefined }]);
+  const client = { user: { id: BOT }, guilds: { cache: new Collection([[GUILD, f.guild]]) } };
+  await installReportButtons(client, f.store);
+  assert.equal(f.edits[0].components[0].toJSON().components[0].custom_id, `report:edit:${f.record.id}`);
+  assert.equal(f.current().controlsVersion, 1);
+  await installReportButtons(client, f.store);
+  assert.equal(f.edits.length, 1);
+  f.store.save([{ ...f.current(), controlsVersion: undefined }]);
+  f.removePost();
+  await installReportButtons(client, f.store);
+  assert.equal(f.store.list(GUILD).length, 1);
+  assert.equal(f.current().controlsVersion, undefined);
 });
 
 test("correction submission preserves the season and updates day, players, score and replay with spoiler protection", async (t) => {
@@ -360,7 +423,7 @@ test("historical participants remain selectable without the role; newly selected
 test("duplicate display names require explicit player selection instead of guessing the old winner", (t) => {
   const f = setup(t);
   const record = { ...f.current(), players: f.current().players.map((player) => ({ ...player, name: "Max" })) };
-  const command = f.interaction({ targetMessage: { ...f.message,
+  const command = f.interaction({ message: { ...f.message,
     embeds: createResultMessage("Max", "Max", "2-0", f.data.link, f.data).embeds.map((embed) => embed.toJSON()) } });
   const modal = correctionModal(command, record, ROLE).toJSON();
   assert.equal(modal.components[1].component.options.some((option) => option.default), false);
@@ -386,24 +449,24 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
   f.store.save([{ ...f.current(), revision: 1 }]);
   await assert.rejects(handleManagementComponent(f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
     f.store, f.manager, ROLE, f.settings), /inzwischen geändert/);
-  f.store.save([{ ...f.current(), players: [{ id: OTHER, name: "Lennart" }, { id: MAX, name: "Max" }] }]);
+  f.store.save([{ ...f.current(), reporter: { id: OTHER, name: "Lennart" } }]);
   await assert.rejects(handleManagementComponent(f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
-    f.store, f.manager, ROLE, f.settings), /Nur die beiden/);
+    f.store, f.manager, ROLE, f.settings), /Nur die meldende/);
   assert.equal(f.edits.length, 0);
 });
 
 test("deletion requires a private confirmation; canceling leaves the post and search untouched", async (t) => {
   const f = setup(t);
-  const command = f.interaction({ commandName: "Report löschen" });
+  const command = f.admin({ customId: `report:delete:${f.record.id}` });
   await openManagement(command, f.store, f.manager, ROLE);
   assert.ok(command.response.flags.includes(MessageFlags.Ephemeral));
   assert.equal(f.deletions.length, 0);
   const buttons = command.response.components[0].toJSON().components;
-  const cancel = f.interaction({ customId: buttons[1].custom_id });
+  const cancel = f.admin({ customId: buttons[1].custom_id });
   await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
   assert.match(cancel.response.content, /abgebrochen/);
   assert.equal(f.store.list(GUILD).length, 1);
-  const confirm = f.interaction({ customId: buttons[0].custom_id });
+  const confirm = f.admin({ customId: buttons[0].custom_id });
   await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
   assert.match(confirm.response.content, /entfernt/);
   assert.equal(f.isDeleted(), true);
@@ -413,7 +476,7 @@ test("deletion requires a private confirmation; canceling leaves the post and se
 test("the slash fallback finds a deleted post by season and player and removes it only after confirmation", async (t) => {
   const f = setup(t);
   f.removePost();
-  const command = f.interaction({ commandName: "report-entfernen",
+  const command = f.admin({ commandName: "report-entfernen",
     options: removalOptions({ name: "jan", matchday: 1 }) });
   await openManagement(command, f.store, f.manager, ROLE);
   assert.ok(command.defer.flags.includes(MessageFlags.Ephemeral));
@@ -421,7 +484,7 @@ test("the slash fallback finds a deleted post by season and player and removes i
   assert.ok(command.response.content.includes(f.data.link));
   assert.equal(f.store.list(GUILD).length, 1);
   assert.equal(f.fetches.length, 0, "Searching does not need the original message");
-  const confirm = f.interaction({ customId: command.response.components[0].toJSON().components[0].custom_id });
+  const confirm = f.admin({ customId: command.response.components[0].toJSON().components[0].custom_id });
   await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
   assert.equal(f.store.list(GUILD).length, 0);
   assert.equal(f.deletions.length, 0);
@@ -434,22 +497,22 @@ test("multiple removal matches require selecting exactly one report and confirmi
   const f = setup(t);
   const second = addPublished(f, { matchday: 2, link: "https://example.org/second" });
   addPublished(f, { season: 5 }, "500000000000000003");
-  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
   await openManagement(command, f.store, f.manager, ROLE);
   const options = rows(command.response)[0][0].options;
   assert.equal(options.length, 2);
   assert.match(options[1].label, /Spieltag 2 · Jan vs\. Max/);
   assert.equal(options[1].description, second.link);
   assert.equal(f.deletions.length, 0);
-  const select = f.interaction({ customId: rows(command.response)[0][0].custom_id, values: [options[0].value] });
+  const select = f.admin({ customId: rows(command.response)[0][0].custom_id, values: [options[0].value] });
   await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
   assert.match(select.response.content, /wirklich löschen/);
   assert.equal(f.deletions.length, 0);
-  const confirm = f.interaction({ customId: rows(select.response)[0][0].custom_id });
+  const confirm = f.admin({ customId: rows(select.response)[0][0].custom_id });
   await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
   assert.equal(f.deletions.length, 1);
   assert.equal(f.store.list(GUILD).length, 2);
-  const specific = f.interaction({ commandName: "report-entfernen", options: removalOptions({ matchday: 2 }) });
+  const specific = f.admin({ commandName: "report-entfernen", options: removalOptions({ matchday: 2 }) });
   await openManagement(specific, f.store, f.manager, ROLE);
   assert.ok(specific.response.content.includes(second.link));
   assert.match(specific.response.content, /wirklich löschen/);
@@ -458,25 +521,25 @@ test("multiple removal matches require selecting exactly one report and confirmi
 test("removal pages include every match and canceling never deletes anything", async (t) => {
   const f = setup(t);
   for (let index = 1; index < 27; index++) addPublished(f, { link: `https://example.org/${index}` }, String(BigInt(MESSAGE) + BigInt(index)));
-  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
   await openManagement(command, f.store, f.manager, ROLE);
   assert.match(command.response.content, /27 Treffer · Seite 1 von 2/);
   const firstPage = rows(command.response)[0][0].options;
   assert.equal(firstPage.length, 25);
-  const next = f.interaction({ customId: rows(command.response)[1][1].custom_id });
+  const next = f.admin({ customId: rows(command.response)[1][1].custom_id });
   await handleManagementComponent(next, f.store, f.manager, ROLE, f.settings);
   assert.match(next.response.content, /Seite 2 von 2/);
   const secondPage = rows(next.response)[0][0].options;
   assert.equal(secondPage.length, 2);
   assert.equal(new Set([...firstPage, ...secondPage].map((option) => option.value)).size, 27);
-  const cancel = f.interaction({ customId: rows(next.response)[1][2].custom_id });
+  const cancel = f.admin({ customId: rows(next.response)[1][2].custom_id });
   await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
   assert.deepEqual(cancel.response.components, []);
   assert.equal(f.deletions.length, 0);
   assert.equal(f.store.list(GUILD).length, 27);
 });
 
-test("removal suggestions and results exclude other people's reports, other servers and inaccessible private threads", async (t) => {
+test("removal requires management and never exposes other servers or inaccessible private threads", async (t) => {
   const f = setup(t);
   const hiddenChannel = "400000000000000002";
   addPublished(f, { players: [{ id: OTHER, name: "Lennart" }, { id: MAX, name: "Max" }] });
@@ -488,13 +551,12 @@ test("removal suggestions and results exclude other people's reports, other serv
     ...f.channel, id: hiddenChannel, type: ChannelType.PrivateThread,
     members: { cache: new Collection([[JAN, {}]]), async fetch() { throw new Error("no longer a member"); } },
   } : fetchChannel(id);
-  const autocomplete = f.interaction({ options: removalOptions({ name: "" }), async respond(choices) { this.choices = choices; } });
+  const autocomplete = f.admin({ options: removalOptions({ name: "" }), async respond(choices) { this.choices = choices; } });
   await handleRemovalAutocomplete(autocomplete, f.store);
-  assert.deepEqual(autocomplete.choices.map((choice) => choice.name), ["Jan", "Max"]);
+  assert.deepEqual(autocomplete.choices.map((choice) => choice.name), ["Jan", "Lennart", "Max"]);
   const command = f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: OTHER }) });
-  await openManagement(command, f.store, f.manager, ROLE);
-  assert.match(command.response.content, /Keine passenden Reports/);
-  const admin = f.interaction({ commandName: "report-entfernen", memberPermissions: permissions(P.ManageGuild),
+  await assert.rejects(openManagement(command, f.store, f.manager, ROLE), /Nur die Ligaverwaltung/);
+  const admin = f.admin({ commandName: "report-entfernen", memberPermissions: permissions(P.ManageGuild),
     options: removalOptions({ name: OTHER }) });
   await openManagement(admin, f.store, f.manager, ROLE);
   assert.match(admin.response.content, /Lennart/);
@@ -504,21 +566,21 @@ test("removal suggestions and results exclude other people's reports, other serv
 test("removal choices reject stale records, foreign users, revoked access and invalid filters", async (t) => {
   const f = setup(t);
   addPublished(f, { matchday: 2 });
-  const command = f.interaction({ commandName: "report-entfernen", options: removalOptions() });
+  const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
   await openManagement(command, f.store, f.manager, ROLE);
   const customId = rows(command.response)[0][0].custom_id;
   const values = [rows(command.response)[0][0].options[0].value];
-  await assert.rejects(handleManagementComponent(f.interaction({ customId, values, user: { id: OTHER } }),
+  await assert.rejects(handleManagementComponent(f.admin({ customId, values, user: { id: OTHER } }),
     f.store, f.manager, ROLE, f.settings), /anderen Person/);
   f.channel.permissionsFor = () => new PermissionsBitField([]);
-  await assert.rejects(handleManagementComponent(f.interaction({ customId, values }),
+  await assert.rejects(handleManagementComponent(f.admin({ customId, values }),
     f.store, f.manager, ROLE, f.settings), /keinen Zugriff/);
   f.channel.permissionsFor = () => permissions();
   f.store.save(f.store.list(GUILD).map((match) => ({ ...match, revision: 1 })));
-  await assert.rejects(handleManagementComponent(f.interaction({ customId, values }),
+  await assert.rejects(handleManagementComponent(f.admin({ customId, values }),
     f.store, f.manager, ROLE, f.settings), /inzwischen geändert/);
   for (const filters of [{ season: 0 }, { season: 10000 }, { matchday: 26 }]) {
-    await assert.rejects(openManagement(f.interaction({ commandName: "report-entfernen", options: removalOptions(filters) }),
+    await assert.rejects(openManagement(f.admin({ commandName: "report-entfernen", options: removalOptions(filters) }),
       f.store, f.manager, ROLE), /Season von/);
   }
   assert.equal(f.deletions.length, 0);
@@ -528,13 +590,13 @@ test("removal suggestions retain historical names and require explicit selection
   const f = setup(t);
   addPublished(f, { matchday: 2, players: [{ id: JAN, name: "Roran321" }, { id: MAX, name: "Max" }] });
   f.members.clear();
-  const autocomplete = f.interaction({ options: removalOptions({ name: "ja" }), async respond(choices) { this.choices = choices; } });
+  const autocomplete = f.admin({ options: removalOptions({ name: "ja" }), async respond(choices) { this.choices = choices; } });
   await handleRemovalAutocomplete(autocomplete, f.store);
   assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);
   f.store.save(f.store.list(GUILD).map((match) => ({ ...match, players: match.players.map((player) => ({ ...player, name: "Max" })) })));
-  await assert.rejects(openManagement(f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: "Max" }) }),
+  await assert.rejects(openManagement(f.admin({ commandName: "report-entfernen", options: removalOptions({ name: "Max" }) }),
     f.store, f.manager, ROLE), /Mehrere Teilnehmer/);
-  const selected = f.interaction({ commandName: "report-entfernen", options: removalOptions({ name: MAX }) });
+  const selected = f.admin({ commandName: "report-entfernen", options: removalOptions({ name: MAX }) });
   await openManagement(selected, f.store, f.manager, ROLE);
   assert.equal(rows(selected.response)[0][0].options.length, 2);
 });
@@ -569,7 +631,7 @@ test("a deletion survives a disk failure after Discord removed the message and r
 test("prefilling a correction reverses escaped score text without changing its backslashes or markdown", (t) => {
   const f = setup(t);
   const score = "2\\0 ** || ` @everyone";
-  const command = f.interaction({ targetMessage: { ...f.message,
+  const command = f.interaction({ message: { ...f.message,
     embeds: createResultMessage("Jan", "Max", score, f.data.link, f.data).embeds.map((embed) => embed.toJSON()) } });
   const modal = correctionModal(command, f.current(), ROLE).toJSON();
   assert.equal(modal.components[3].component.value, score);

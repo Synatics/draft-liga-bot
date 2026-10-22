@@ -80,9 +80,16 @@ test("configuration reports all missing or invalid required values without revea
 test("configuration trims surrounding whitespace and accepts opaque tokens without depending on a token format", () => {
   assert.deepEqual(readConfiguration(environment(undefined, {
     DISCORD_TOKEN: ` ${TOKEN}\n`, CLIENT_ID: ` ${CLIENT} `, PARTICIPANT_ROLE_ID: `\t${ROLE}`,
-  })), { token: TOKEN, clientId: CLIENT, participantRoleId: ROLE });
+  })), { token: TOKEN, clientId: CLIENT, participantRoleId: ROLE, managerRoleId: "" });
   assert.equal(readConfiguration(environment(undefined, { DISCORD_TOKEN: "future.token-format_123" })).token,
     "future.token-format_123");
+});
+
+test("the optional manager role is validated and cannot accidentally be the participant role", () => {
+  assert.equal(readConfiguration(environment(undefined, { LEAGUE_MANAGER_ROLE_ID: "100000000000000002" })).managerRoleId, "100000000000000002");
+  for (const id of ["bad-role", ROLE]) {
+    assert.throws(() => readConfiguration(environment(undefined, { LEAGUE_MANAGER_ROLE_ID: id })), /LEAGUE_MANAGER_ROLE_ID|verschieden/);
+  }
 });
 
 test("invalid configuration and an invalid Railway volume fail before creating a data directory", (t) => {
@@ -100,9 +107,10 @@ test("a fresh installation checks storage, leaves no probes and still permits co
   assert.equal(state.config.participantRoleId, ROLE);
   assert.throws(() => state.settingsStore.get("guild"), /noch nicht eingerichtet/);
   assert.equal(state.matchStore.list("guild").length, 0);
-  assert.deepEqual(fs.readdirSync(directory), ["matches.json"]);
+  assert.deepEqual(fs.readdirSync(directory), ["liga.sqlite"]);
   state.settingsStore.setSeason("guild", 4, 9, "19.10.2026");
-  assert.equal(new LeagueSettingsStore(state.settingsPath).get("guild").season, 4);
+  assert.equal(new LeagueSettingsStore(state.databasePath, undefined, state.database).get("guild").season, 4);
+  state.database.close();
 });
 
 test("preflight does not rewrite valid data or discard a damaged existing settings file or archive", (t) => {
@@ -113,10 +121,11 @@ test("preflight does not rewrite valid data or discard a damaged existing settin
   new MatchStore(matchesPath);
   const settings = fs.readFileSync(settingsPath, "utf8");
   const matches = fs.readFileSync(matchesPath, "utf8");
-  prepareStartup(environment(directory));
+  prepareStartup(environment(directory)).database.close();
   assert.equal(fs.readFileSync(settingsPath, "utf8"), settings);
   assert.equal(fs.readFileSync(matchesPath, "utf8"), matches);
   for (const [path, name] of [[settingsPath, "league-settings.json"], [matchesPath, "matches.json"]]) {
+    fs.unlinkSync(join(directory, "liga.sqlite"));
     fs.writeFileSync(path, `broken ${TOKEN}`);
     assert.throws(() => prepareStartup(environment(directory)), (error) => {
       assert.ok(error instanceof StartupError);
@@ -127,7 +136,7 @@ test("preflight does not rewrite valid data or discard a damaged existing settin
     assert.equal(fs.readFileSync(path, "utf8"), `broken ${TOKEN}`);
     fs.writeFileSync(path, path === settingsPath ? settings : matches);
   }
-  assert.deepEqual(fs.readdirSync(directory).sort(), ["league-settings.json", "matches.json"]);
+  assert.ok(fs.readdirSync(directory).some((name) => name.startsWith("migration-json-")));
 });
 
 test("a file in place of the data directory produces an actionable storage error", (t) => {

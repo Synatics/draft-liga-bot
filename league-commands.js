@@ -2,16 +2,19 @@ const {
   ApplicationCommandOptionType,
   InteractionContextType,
   MessageFlags,
-  PermissionFlagsBits,
 } = require("discord.js");
 const { LeagueSettingsError } = require("./league-settings");
+const { isLeagueManager, currentMember } = require("./permissions");
+const { handleAuditCommand } = require("./audit-commands");
 
 const leagueCommand = {
   name: "liga",
   description: "Season und aktuellen Spieltag der Liga verwalten",
   contexts: [InteractionContextType.Guild],
-  default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   options: [
+    { type: ApplicationCommandOptionType.Subcommand, name: "log", description: "Änderungsprotokoll einer Season als Datei per DM erhalten",
+      options: [{ type: ApplicationCommandOptionType.Integer, name: "season", description: "Season des Protokolls",
+        required: true, min_value: 1, max_value: 9999 }] },
     {
       type: ApplicationCommandOptionType.Subcommand,
       name: "season",
@@ -51,12 +54,15 @@ const leagueCommand = {
   ],
 };
 
-async function handleLeagueCommand(interaction, settingsStore) {
-  if (!interaction.guild || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-    throw new LeagueSettingsError("Zum Verwalten der Liga brauchst du die Berechtigung „Server verwalten“.");
+async function handleLeagueCommand(interaction, settingsStore, database, config = {}) {
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "log") return handleAuditCommand(interaction, database, config);
+  if (!isLeagueManager(interaction, config.managerRoleId)) {
+    throw new LeagueSettingsError("Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle oder „Server verwalten“.");
   }
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-  const subcommand = interaction.options.getSubcommand();
+  const member = await currentMember(interaction);
+  if (!isLeagueManager(interaction, config.managerRoleId, member)) throw new LeagueSettingsError("Du darfst die Liga nicht mehr verwalten.");
   let settings;
   if (subcommand === "season") {
     settings = settingsStore.setSeason(

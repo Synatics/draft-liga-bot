@@ -1,3 +1,5 @@
+const { reportButtons } = require("./report-buttons");
+
 class ReportPublisher {
   constructor(store) {
     this.store = store;
@@ -21,7 +23,7 @@ class ReportPublisher {
       this.store.setPublication(record.id, { status: "sending" });
       let sent;
       try {
-        sent = await channel.send({ ...message, nonce: record.id, enforceNonce: true });
+        sent = await channel.send({ ...message, components: reportButtons(record.id), nonce: record.id, enforceNonce: true });
       } catch (error) {
         // A timeout or server failure may occur after Discord accepted the message.
         // Only an explicit client-error response confirms that no post was created.

@@ -21,15 +21,21 @@ const { MatchStoreError, normalizeReplayLink } = require("./match-store");
 const { ReportPublisher } = require("./report-publisher");
 const { ReportManager, ReportManagementError } = require("./report-manager");
 const { managementCommands, openManagement, handleManagementComponent, handleRemovalAutocomplete } = require("./report-management");
-const { DataBackups, startAutomaticBackups } = require("./data-backups");
+const { startAutomaticBackups } = require("./data-backups");
+const { SqliteBackups } = require("./database-backups");
+const { installReportButtons } = require("./report-buttons");
+const { actorOf } = require("./permissions");
 const { SearchError, searchCommand, handleSearchCommand, handleSearchAutocomplete } = require("./search-commands");
 const { prepareStartup, connectDiscord, failStartup } = require("./startup");
 
 let client;
+let database;
 
 async function startBot() {
-  const { config, settingsPath, settingsStore, matchStore } = prepareStartup(process.env);
-  const { participantRoleId } = config;
+  const state = prepareStartup(process.env);
+  const { config, databasePath, settingsStore, matchStore } = state;
+  database = state.database;
+  const { participantRoleId, managerRoleId } = config;
   console.log("✅ Konfiguration und Datenspeicher geprüft.");
   const reportPublisher = new ReportPublisher(matchStore);
   const reportManager = new ReportManager(matchStore);
@@ -60,6 +66,7 @@ async function startBot() {
     console.log("✅ Bot ist mit Discord verbunden.");
     loadedGuilds.clear();
     for (const guild of client.guilds.cache.values()) warmGuild(guild);
+    installReportButtons(client, matchStore).catch(() => console.error("Ältere Ergebnisposts konnten nicht mit Buttons ergänzt werden."));
   });
   client.on(Events.GuildCreate, warmGuild);
   client.on(Events.GuildDelete, (guild) => loadedGuilds.delete(guild.id));
@@ -83,11 +90,9 @@ async function startBot() {
     const isSearchCommand = interaction.isChatInputCommand() && interaction.commandName === "suchen";
     const isSearchAutocomplete = interaction.isAutocomplete() && interaction.commandName === "suchen";
     const isRemovalAutocomplete = interaction.isAutocomplete() && interaction.commandName === "report-entfernen";
-    const isManagementCommand = (interaction.isMessageContextMenuCommand?.() &&
-      ["Report korrigieren", "Report löschen"].includes(interaction.commandName)) ||
-      (interaction.isChatInputCommand() && interaction.commandName === "report-entfernen");
+    const isManagementCommand = interaction.isChatInputCommand() && interaction.commandName === "report-entfernen";
     const isManagementComponent = (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isModalSubmit()) &&
-      interaction.customId?.startsWith("manage:");
+      /^(?:manage|report):/.test(interaction.customId);
     const isReportSubmit = interaction.isModalSubmit() && (
       interaction.customId === "submit_report" || interaction.customId.startsWith("submit_report:")
     );
@@ -96,15 +101,15 @@ async function startBot() {
 
     try {
       if (isRemovalAutocomplete) {
-        await handleRemovalAutocomplete(interaction, matchStore);
+        await handleRemovalAutocomplete(interaction, matchStore, managerRoleId);
         return;
       }
       if (isManagementCommand) {
-        await openManagement(interaction, matchStore, reportManager, participantRoleId, settingsStore);
+        await openManagement(interaction, matchStore, reportManager, participantRoleId, settingsStore, managerRoleId);
         return;
       }
       if (isManagementComponent) {
-        await handleManagementComponent(interaction, matchStore, reportManager, participantRoleId, settingsStore);
+        await handleManagementComponent(interaction, matchStore, reportManager, participantRoleId, settingsStore, managerRoleId);
         return;
       }
       if (isSearchAutocomplete) {
@@ -116,7 +121,7 @@ async function startBot() {
         return;
       }
       if (isLeagueCommand) {
-        await handleLeagueCommand(interaction, settingsStore);
+        await handleLeagueCommand(interaction, settingsStore, database, config);
         return;
       }
       checkParticipantRole(interaction.guild, participantRoleId);
@@ -147,7 +152,8 @@ async function startBot() {
       );
 
       const publication = await reportPublisher.publish(
-        { guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link },
+        { guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link,
+          reporter: actorOf(interaction), result: { winnerId: players[0].id, loserId: players[1].id, score } },
         interaction.channel,
         createResultMessage(winner, loser, score, link, context)
       );
@@ -201,7 +207,7 @@ async function startBot() {
   });
 
   await connectDiscord(client, rest, commands, config);
-  startAutomaticBackups(new DataBackups(settingsPath));
+  startAutomaticBackups(new SqliteBackups(databasePath));
 }
 
-startBot().catch((error) => failStartup(error, client));
+startBot().catch((error) => { database?.close(); return failStartup(error, client); });

@@ -14,7 +14,9 @@ const searchCommands = require("./search-commands");
 
 test("league settings, reports and role changes work together without exposing results", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "pokemon-liga-index-test-"));
+  let runtimeState;
   t.after(() => {
+    runtimeState?.database.close();
     assert.equal(dirname(directory), tmpdir());
     rmSync(directory, { recursive: true, force: true });
   });
@@ -93,15 +95,17 @@ test("league settings, reports and role changes work together without exposing r
       if (name === "./reports") return reports;
       if (name === "./report-publisher") return require(name);
       if (name === "./report-manager" || name === "./report-management") return require(name);
+      if (["./database-backups", "./report-buttons", "./permissions"].includes(name)) return require(name);
       if (name === "./startup") return {
         ...require(name),
         prepareStartup(env) {
           const state = require(name).prepareStartup({ ...env, DATA_DIR: directory });
+          runtimeState = state;
           state.settingsStore.now = () => now;
           const save = state.matchStore.save.bind(state.matchStore);
-          state.matchStore.save = (matches) => {
+          state.matchStore.save = (matches, event) => {
             if (failSaving) throw new MatchStoreError("Das Replay konnte nicht gespeichert werden.");
-            save(matches);
+            save(matches, event);
           };
           return state;
         },
@@ -135,10 +139,11 @@ test("league settings, reports and role changes work together without exposing r
     return listener(interaction);
   };
   assert.equal(registeredCommands.find((command) => command.name === "liga").default_member_permissions,
-    discord.PermissionFlagsBits.ManageGuild.toString());
+    undefined);
+  assert.equal(registeredCommands.find((command) => command.name === "liga").options.find((option) => option.name === "log").options[0].required, true);
   assert.equal(registeredCommands.find((command) => command.name === "suchen").options[1].autocomplete, true);
   assert.equal(registeredCommands.find((command) => command.name === "report-entfernen").options[1].autocomplete, true);
-  assert.equal(registeredCommands.filter((command) => command.type === discord.ApplicationCommandType.Message).length, 2);
+  assert.equal(registeredCommands.filter((command) => command.type === discord.ApplicationCommandType.Message).length, 0);
 
   const command = {
     guild, commandName: "report", isChatInputCommand: () => true, isModalSubmit: () => false,
@@ -159,6 +164,7 @@ test("league settings, reports and role changes work together without exposing r
   function submission(season = 3, matchday = "7") {
     return {
       guild, customId: `submit_report:${season}`, isChatInputCommand: () => false, isModalSubmit: () => true,
+      user: { id: janId }, member: members.get(janId),
       channelId,
       fields: new discord.ModalSubmitFields([
         { component: { type: discord.ComponentType.StringSelect, customId: "matchday", values: [matchday] } },
@@ -192,18 +198,19 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(posts[0].embeds[0].toJSON().fields[0].value, /^\|\| .+ \|\|$/);
   assert.match(valid.response.content, /erfolgreich/);
   assert.equal(posts[0].embeds[0].toJSON().author.name, "Season 3 · Spieltag 7");
-  const archivePath = join(directory, "matches.json");
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
+  const stored = () => new MatchStore(runtimeState.databasePath, runtimeState.database).list(guild.id);
+  assert.equal(stored().length, 1);
   const duplicate = submission();
   await handle(duplicate);
   assert.equal(posts.length, 1, "Repeated submissions must not create a second public post");
   assert.match(duplicate.response.content, /bereits gepostet/);
   assert.match(duplicate.response.content, /500000000000000001/);
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
+  assert.equal(stored().length, 1);
 
   function adminCommand(subcommand, values = {}, allowed = true) {
     return {
       guild, commandName: "liga", isChatInputCommand: () => true, isModalSubmit: () => false,
+      user: { id: janId }, member: members.get(janId),
       memberPermissions: new discord.PermissionsBitField(allowed ? [discord.PermissionFlagsBits.ManageGuild] : []),
       options: {
         getSubcommand: () => subcommand,
@@ -218,7 +225,7 @@ test("league settings, reports and role changes work together without exposing r
   const denied = adminCommand("season", { nummer: 4, spieltage: 18, startdatum: "19.10.2026" }, false);
   await handle(denied);
   assert.match(denied.response.content, /Server verwalten/);
-  assert.equal(new leagueSettings.LeagueSettingsStore(settingsPath, () => now).get(guild.id).currentMatchday, 7);
+  assert.equal(new leagueSettings.LeagueSettingsStore(runtimeState.databasePath, () => now, runtimeState.database).get(guild.id).currentMatchday, 7);
 
   // Sunday 23:59:59 in Germany still uses the old week; Monday advances without a command.
   now = new Date("2026-10-18T21:59:59Z");
@@ -292,7 +299,7 @@ test("league settings, reports and role changes work together without exposing r
   await handle(unsaved);
   assert.match(unsaved.response.content, /Replay konnte nicht gespeichert/);
   assert.equal(posts.length, 2, "A storage failure must not produce a public result");
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 2);
+  assert.equal(stored().length, 2);
   failSaving = false;
 
   const failedPost = submission(4);
@@ -301,9 +308,9 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(failedPost.response.content, /Replay ist für \/suchen gespeichert/);
   assert.equal(errors.length, 1);
   assert.match(errors[0][0], /Fehler beim Posten/);
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 3);
+  assert.equal(stored().length, 3);
   await handle(submission(4));
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 3, "Retrying a failed public post must not duplicate search results");
+  assert.equal(stored().length, 3, "Retrying a failed public post must not duplicate search results");
   assert.equal(posts.length, 3);
   await handle(submission(4));
   assert.equal(posts.length, 3, "A successful retry must be protected from subsequent duplicate posts");
@@ -311,8 +318,8 @@ test("league settings, reports and role changes work together without exposing r
   const management = {
     guild, channel: guild.channels.cache.get(channelId), channelId, client, user: { id: janId },
     member: members.get(janId), memberPermissions: new discord.PermissionsBitField([]),
-    commandName: "Report korrigieren", targetMessage: publicMessages.get("500000000000000001"),
-    isChatInputCommand: () => false, isMessageContextMenuCommand: () => true, isModalSubmit: () => false,
+    message: publicMessages.get("500000000000000001"), customId: posts[0].components[0].toJSON().components[0].custom_id,
+    isChatInputCommand: () => false, isButton: () => true, isModalSubmit: () => false,
     async showModal(modal) { this.modal = modal.toJSON(); },
     async reply(payload) { this.response = payload; },
   };
@@ -320,7 +327,7 @@ test("league settings, reports and role changes work together without exposing r
   assert.match(management.modal.title, /Report korrigieren · Season 3/);
   assert.equal(management.modal.components.length, 5);
   const correction = {
-    ...management, isMessageContextMenuCommand: () => false, isModalSubmit: () => true,
+    ...management, isButton: () => false, isModalSubmit: () => true,
     customId: management.modal.custom_id,
     fields: {
       getTextInputValue: (name) => ({ score: "1-0", link: "https://example.org/corrected" })[name],
@@ -332,26 +339,27 @@ test("league settings, reports and role changes work together without exposing r
   await handle(correction);
   assert.match(correction.response.content, /korrigiert/);
   assert.equal(posts.length, 3, "Correcting a report edits its post instead of sending a new one");
-  assert.equal(new MatchStore(archivePath).list(guild.id).find((match) => match.publication.messageId === "500000000000000001").matchday, 3);
-  const deletion = { ...management, commandName: "Report löschen" };
+  assert.equal(stored().find((match) => match.publication.messageId === "500000000000000001").matchday, 3);
+  const deletion = { ...management, memberPermissions: new discord.PermissionsBitField([discord.PermissionFlagsBits.ManageGuild]),
+    customId: posts[0].components[0].toJSON().components[1].custom_id };
   await handle(deletion);
   const confirmation = {
-    ...management, isMessageContextMenuCommand: () => false, isButton: () => true,
+    ...deletion, isButton: () => true,
     customId: deletion.response.components[0].toJSON().components[0].custom_id,
     async deferUpdate() { this.deferred = true; }, async editReply(payload) { this.response = payload; },
   };
   await handle(confirmation);
   assert.match(confirmation.response.content, /entfernt/);
   assert.equal(publicMessages.has("500000000000000001"), false);
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 2);
+  assert.equal(stored().length, 2);
   // The slash fallback discovers a manually deleted post without its message link.
   publicMessages.delete("500000000000000002");
-  const removalAutocomplete = { ...autocomplete, commandName: "report-entfernen" };
+  const removalAutocomplete = { ...autocomplete, commandName: "report-entfernen", memberPermissions: deletion.memberPermissions };
   await handle(removalAutocomplete);
   assert.deepEqual(removalAutocomplete.choices, [{ name: "Max", value: maxId }]);
   const removal = {
     ...search, user: management.user, member: management.member,
-    commandName: "report-entfernen", memberPermissions: management.memberPermissions,
+    commandName: "report-entfernen", memberPermissions: deletion.memberPermissions,
     options: { getInteger: (name) => name === "season" ? 3 : 2, getString: () => janId },
   };
   await handle(removal);
@@ -359,7 +367,14 @@ test("league settings, reports and role changes work together without exposing r
   const removeMissing = { ...confirmation, customId: removal.response.components[0].toJSON().components[0].custom_id };
   await handle(removeMissing);
   assert.match(removeMissing.response.content, /entfernt/);
-  assert.equal(new MatchStore(archivePath).list(guild.id).length, 1);
+  assert.equal(stored().length, 1);
+  const logDms = [];
+  const log = { ...search, commandName: "liga", member: members.get(janId),
+    user: { id: janId, async send(payload) { logDms.push(payload); } },
+    options: { getSubcommand: () => "log", getInteger: () => 3 } };
+  await handle(log);
+  assert.match(log.response.content, /Protokoll für Season 3/);
+  assert.match(logDms[0].files[0].attachment.toString("utf8"), /GELÖSCHT/);
   const failedSuggestions = { ...removalAutocomplete,
     options: { getInteger: () => 4, getFocused() { throw new Error("Autocomplete unavailable"); } } };
   await handle(failedSuggestions);

@@ -7,6 +7,23 @@ class MatchStoreError extends Error {}
 
 const isSnowflake = (value) => typeof value === "string" && /^\d{17,20}$/.test(value);
 
+function validateActor(actor) {
+  if (actor !== undefined && (!actor || !isSnowflake(actor.id) || typeof actor.name !== "string" || !actor.name.trim() || actor.name.length > 100)) {
+    throw new MatchStoreError("Ungültige Person für das Änderungsprotokoll.");
+  }
+}
+
+function validateResult(result, players) {
+  if (result !== undefined && (!result || !players.some((player) => player.id === result.winnerId) ||
+      !players.some((player) => player.id === result.loserId) || result.winnerId === result.loserId ||
+      typeof result.score !== "string" || !result.score.trim() || result.score.length > 100)) {
+    throw new MatchStoreError("Ungültiges gespeichertes Ergebnis.");
+  }
+}
+
+const snapshot = (record) => ({ ...matchData(record), ...(record.reporter ? { reporter: record.reporter } : {}),
+  ...(record.result ? { result: record.result } : {}) });
+
 function validatePublication(publication) {
   if (!publication || !["pending", "sending", "published"].includes(publication.status) ||
       (publication.status === "published" ? !isSnowflake(publication.messageId) : publication.messageId !== undefined)) {
@@ -37,6 +54,12 @@ function validateMatch(match) {
     throw new MatchStoreError("Ungültige Daten für das Replay-Archiv.");
   }
   normalizeReplayLink(match.link);
+  validateActor(match.reporter);
+  validateResult(match.result, match.players);
+  if (match.createdAt !== undefined && (typeof match.createdAt !== "string" || !Number.isFinite(Date.parse(match.createdAt)))) {
+    throw new MatchStoreError("Ungültiger Erstellungszeitpunkt.");
+  }
+  if (match.controlsVersion !== undefined && match.controlsVersion !== 1) throw new MatchStoreError("Ungültige Button-Version.");
   // Older archives have neither field. Partial metadata must not silently enable a retry.
   if (match.id !== undefined || match.publication !== undefined) {
     if (typeof match.id !== "string" || !/^[a-f0-9]{24}$/.test(match.id)) {
@@ -74,16 +97,18 @@ function revisionOf(match) {
 
 function validateChange(change, match) {
   if (!change || !["edit", "delete"].includes(change.kind)) throw new MatchStoreError("Ungültige laufende Report-Änderung.");
+  validateActor(change.actor);
   if (change.kind === "delete") {
-    if (Object.keys(change).length !== 1) throw new MatchStoreError("Ungültiger Löschauftrag.");
+    if (Object.keys(change).some((key) => !["kind", "actor"].includes(key))) throw new MatchStoreError("Ungültiger Löschauftrag.");
     return;
   }
   const target = change.target;
-  if (Object.keys(change).sort().join() !== "embed,kind,target") throw new MatchStoreError("Ungültige Korrekturdaten.");
+  if (Object.keys(change).filter((key) => !["actor", "result"].includes(key)).sort().join() !== "embed,kind,target") throw new MatchStoreError("Ungültige Korrekturdaten.");
   if (!target || Object.keys(target).sort().join() !== "channelId,guildId,link,matchday,players,season") {
     throw new MatchStoreError("Ungültige Korrekturdaten.");
   }
   validateMatch(target);
+  validateResult(change.result, target.players);
   if (target.guildId !== match.guildId || target.channelId !== match.channelId) {
     throw new MatchStoreError("Ein Report kann nicht auf einen anderen Server oder in einen anderen Kanal verschoben werden.");
   }
@@ -109,11 +134,12 @@ function parseMatchesDocument(text) {
 }
 
 class MatchStore {
-  constructor(filePath) {
+  constructor(filePath, storage) {
     this.filePath = filePath;
+    this.storage = storage;
     this.matches = [];
     try {
-      const data = parseMatchesDocument(readFileSync(filePath, "utf8"));
+      const data = parseMatchesDocument(storage ? storage.readMatches() : readFileSync(filePath, "utf8"));
       this.matches = data.matches;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -124,8 +150,9 @@ class MatchStore {
     }
   }
 
-  list(guildId) {
-    return structuredClone(this.matches.filter((match) => match.guildId === guildId));
+  list(guildId, season) {
+    return this.storage ? this.storage.listMatches(guildId, season) :
+      structuredClone(this.matches.filter((match) => match.guildId === guildId && (season === undefined || match.season === season)));
   }
 
   get(id, guildId) {
@@ -142,7 +169,7 @@ class MatchStore {
   }
 
   add(match) {
-    // Store only search metadata, with a stable order independent of the winner.
+    // Keep the match identity independent of the winner; ownership is stored separately.
     const record = matchData(match);
     const duplicate = this.matches.find((entry) => sameMatch(entry, record) ||
       (entry.change?.kind === "edit" && sameMatch(entry.change.target, record)));
@@ -151,34 +178,47 @@ class MatchStore {
       record.id = randomBytes(12).toString("hex");
     } while (this.matches.some((entry) => entry.id === record.id));
     record.publication = { status: "pending" };
+    if (match.reporter) record.reporter = structuredClone(match.reporter);
+    if (match.result) record.result = structuredClone(match.result);
+    if (match.reporter) record.createdAt = new Date().toISOString();
     this.save([...this.matches, record]);
     return structuredClone(record);
   }
 
-  beginChange(id, guildId, expectedRevision, change) {
+  beginChange(id, guildId, expectedRevision, change, actor) {
     const match = this.get(id, guildId);
     if (revisionOf(match) !== expectedRevision || (match.change && change.kind !== "delete")) {
       throw new MatchStoreError("Dieser Report wurde inzwischen geändert. Bitte öffne die Aktion erneut am Ergebnispost.");
     }
     if (match.publication?.status !== "published") throw new MatchStoreError("Der Report wurde noch nicht bestätigt veröffentlicht.");
-    validateChange(change, match);
+    const operation = { ...structuredClone(change), ...(actor ? { actor } : {}) };
+    validateChange(operation, match);
     if (change.kind === "edit" && this.matches.some((entry) => entry.id !== id &&
         (sameMatch(entry, change.target) || (entry.change?.kind === "edit" && sameMatch(entry.change.target, change.target))))) {
       throw new MatchStoreError("Für diese Angaben existiert bereits ein anderer Report. Bitte prüfe die Season, den Spieltag und den Replay-Link.");
     }
-    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, change: structuredClone(change) } : entry));
+    this.save(this.matches.map((entry) => entry.id === id ? { ...entry, change: operation } : entry));
   }
 
-  finishChange(id, guildId, cancel = false) {
+  finishChange(id, guildId, cancel = false, actor) {
     const match = this.get(id, guildId);
     if (!match.change) throw new MatchStoreError("Für diesen Report läuft keine Änderung.");
     if (!cancel && match.change.kind === "delete") {
-      this.save(this.matches.filter((entry) => entry.id !== id));
+      this.save(this.matches.filter((entry) => entry.id !== id), {
+        id: `${id}:deleted:${(match.revision || 0) + 1}`, action: "deleted", guildId, season: match.season,
+        channelId: match.channelId, reportId: id, messageId: match.publication.messageId,
+        actor: match.change.actor || actor || null, before: snapshot(match), after: null,
+      });
       return;
     }
     const { change, ...previous } = match;
-    const record = cancel ? previous : { ...previous, ...change.target, revision: (match.revision || 0) + 1 };
-    this.save(this.matches.map((entry) => entry.id === id ? record : entry));
+    const record = cancel ? previous : { ...previous, ...change.target, result: change.result, controlsVersion: 1,
+      revision: (match.revision || 0) + 1 };
+    this.save(this.matches.map((entry) => entry.id === id ? record : entry), cancel ? undefined : {
+      id: `${id}:edited:${record.revision}`, action: "edited", guildId, season: record.season,
+      channelId: record.channelId, reportId: id, messageId: record.publication.messageId,
+      actor: change.actor || actor || null, before: snapshot(previous), after: snapshot(record),
+    });
   }
 
   setPublication(id, publication) {
@@ -192,11 +232,28 @@ class MatchStore {
       throw new MatchStoreError("Ungültiger Wechsel des Veröffentlichungsstatus.");
     }
     const matches = [...this.matches];
-    matches[index] = { ...matches[index], publication: { ...publication } };
-    this.save(matches);
+    matches[index] = { ...matches[index], publication: { ...publication },
+      ...(publication.status === "published" ? { controlsVersion: 1 } : {}) };
+    const record = matches[index];
+    this.save(matches, publication.status !== "published" ? undefined : {
+      id: `${id}:created`, action: "created", guildId: record.guildId, season: record.season, channelId: record.channelId,
+      reportId: id, messageId: publication.messageId, actor: record.reporter || null, before: null, after: snapshot(record),
+    });
   }
 
-  save(matches) {
+  markControlsInstalled(id, guildId) {
+    this.get(id, guildId);
+    this.save(this.matches.map((record) => record.id === id ? { ...record, controlsVersion: 1 } : record));
+  }
+
+  save(matches, event) {
+    if (this.storage) {
+      try { this.storage.saveMatches(matches, event); } catch {
+        throw new MatchStoreError("Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen.");
+      }
+      this.matches = structuredClone(matches);
+      return;
+    }
     const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
     try {
       mkdirSync(dirname(this.filePath), { recursive: true });
@@ -210,4 +267,4 @@ class MatchStore {
   }
 }
 
-module.exports = { MatchStore, MatchStoreError, normalizeReplayLink, parseMatchesDocument, matchData, revisionOf };
+module.exports = { MatchStore, MatchStoreError, normalizeReplayLink, parseMatchesDocument, matchData, revisionOf, snapshot };
