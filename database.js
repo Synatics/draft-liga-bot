@@ -6,6 +6,10 @@ const { parseSettingsDocument } = require("./league-settings");
 const { parseMatchesDocument, matchData, snapshot } = require("./match-store");
 const { causedError } = require("./diagnostics");
 
+/** @typedef {import('./data-types').Match} Match */
+/** @typedef {import('./data-types').SeasonSettings} SeasonSettings */
+/** @typedef {import('./data-types').AuditWrite} AuditWrite */
+
 const DATABASE_NAME = "liga.sqlite";
 const APPLICATION_ID = 0x444C424F;
 const reportKey = (record) => record.id || `legacy-${createHash("sha256").update(JSON.stringify(matchData(record))).digest("hex")}`;
@@ -118,6 +122,7 @@ class LigaDatabase {
     return JSON.stringify({ version: 1, matches: this.db.prepare("SELECT data FROM reports ORDER BY rowid").all().map((row) => JSON.parse(row.data)) });
   }
 
+  /** @param {string} guildId @param {number} [season] @returns {Match[]} */
   listMatches(guildId, season) {
     const rows = season === undefined
       ? this.db.prepare("SELECT data FROM reports WHERE guild_id=? ORDER BY rowid").all(guildId)
@@ -130,6 +135,7 @@ class LigaDatabase {
       this.db.prepare("SELECT guild_id,data FROM settings").all().map((row) => [row.guild_id, JSON.parse(row.data)])) });
   }
 
+  /** @param {Match[]} matches Internal write; callers must hold a transaction. */
   writeMatches(matches) {
     parseMatchesDocument(JSON.stringify({ version: 1, matches }));
     const remaining = new Set(matches.map(reportKey));
@@ -141,6 +147,7 @@ class LigaDatabase {
     for (const record of matches) upsert.run(reportKey(record), record.guildId, record.season, record.channelId, JSON.stringify(record));
   }
 
+  /** @param {Record<string, SeasonSettings>} guilds Internal write; callers must hold a transaction. */
   writeSettings(guilds) {
     parseSettingsDocument(JSON.stringify({ version: 1, guilds }));
     this.db.exec("DELETE FROM settings");
@@ -148,6 +155,7 @@ class LigaDatabase {
     for (const [guildId, settings] of Object.entries(guilds)) insert.run(guildId, JSON.stringify(settings));
   }
 
+  /** @param {AuditWrite} event Internal write; timestamp and validation are applied here. */
   writeEvent(event) {
     const data = { ...event, at: this.now().toISOString() };
     validateEvent(data);
@@ -155,14 +163,21 @@ class LigaDatabase {
       .run(data.id, data.guildId, data.season, data.reportId, data.at, JSON.stringify(data));
   }
 
+  /**
+   * A report update and its audit event either both commit or both roll back.
+   * @param {Match[]} matches
+   * @param {AuditWrite} [event]
+   */
   saveMatches(matches, event) {
     this.transaction(() => { this.writeMatches(matches); if (event) this.writeEvent(event); });
   }
 
+  /** @param {Record<string, SeasonSettings>} guilds */
   saveSettings(guilds) {
     this.transaction(() => this.writeSettings(guilds));
   }
 
+  /** @param {string} guildId @param {number} season @returns {import('./data-types').AuditEvent[]} */
   auditEvents(guildId, season) {
     if (!Number.isInteger(season) || season < 1 || season > 9999) throw new Error("Eine Season von 1 bis 9999 ist erforderlich.");
     return this.db.prepare("SELECT data FROM audit_events WHERE guild_id=? AND season=? ORDER BY occurred_at,rowid")

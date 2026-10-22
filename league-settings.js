@@ -1,7 +1,9 @@
-const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = require("node:fs");
-const { dirname, join, resolve, relative, isAbsolute, sep } = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const { join, resolve, relative, isAbsolute, sep } = require("node:path");
 const { causedError } = require("./diagnostics");
+const { writeJsonAtomic } = require("./json-storage");
+
+/** @typedef {import('./data-types').SeasonSettings} SeasonSettings */
 
 class LeagueSettingsError extends Error {}
 
@@ -34,6 +36,7 @@ function normalizeStartDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+/** @param {SeasonSettings} settings @param {Date} [now] @returns {number} */
 function currentMatchday(settings, now = new Date()) {
   validateSettings(settings);
   // Keep previously saved manual settings readable until a start date is configured once.
@@ -62,6 +65,7 @@ function validateSettings(settings) {
   }
 }
 
+/** @param {string} text @returns {{version: 1, guilds: Record<string, SeasonSettings>}} */
 function parseSettingsDocument(text) {
   const data = JSON.parse(text);
   if (!data || data.version !== 1 || !data.guilds || typeof data.guilds !== "object" || Array.isArray(data.guilds)) {
@@ -88,10 +92,16 @@ function settingsFilePath(env = process.env) {
 }
 
 class LeagueSettingsStore {
+  /**
+   * @param {string} filePath JSON path, or database path when storage is supplied.
+   * @param {() => Date} [now]
+   * @param {Pick<import('./database').LigaDatabase, 'readSettings' | 'saveSettings'>} [storage]
+   */
   constructor(filePath, now = () => new Date(), storage) {
     this.filePath = filePath;
     this.storage = storage;
     this.now = now;
+    /** @type {Record<string, SeasonSettings>} */
     this.guilds = {};
     try {
       const data = parseSettingsDocument(storage ? storage.readSettings() : readFileSync(filePath, "utf8"));
@@ -104,6 +114,7 @@ class LeagueSettingsStore {
     }
   }
 
+  /** @param {string} guildId @returns {import('./data-types').ActiveSeason} */
   get(guildId) {
     const settings = this.guilds[guildId];
     if (!settings) {
@@ -124,26 +135,19 @@ class LeagueSettingsStore {
     return this.save(guildId, { season, matchdays, startDate: normalizeStartDate(startDate) });
   }
 
+  /** @param {string} guildId @param {SeasonSettings} settings @returns {import('./data-types').ActiveSeason} */
   save(guildId, settings) {
     validateSettings(settings);
     const guilds = { ...this.guilds, [guildId]: { ...settings } };
     const context = { operation: "settings.write", file: this.storage ? "liga.sqlite" : "league-settings.json", guildId, season: settings.season };
-    if (this.storage) {
-      try { this.storage.saveSettings(guilds); } catch (error) {
-        throw causedError(LeagueSettingsError, "Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden.", error, context);
-      }
-      this.guilds = guilds;
-      return this.get(guildId);
-    }
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
     try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      writeFileSync(temporaryPath, JSON.stringify({ version: 1, guilds }, null, 2) + "\n", { flag: "wx" });
-      renameSync(temporaryPath, this.filePath);
+      if (this.storage) this.storage.saveSettings(guilds);
+      else writeJsonAtomic(this.filePath, { version: 1, guilds });
     } catch (error) {
-      try { unlinkSync(temporaryPath); } catch { /* No temporary file may have been created. */ }
-      throw causedError(LeagueSettingsError,
-        "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.", error, context);
+      const message = this.storage
+        ? "Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden."
+        : "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.";
+      throw causedError(LeagueSettingsError, message, error, context);
     }
     // Publish the new settings only once they are safely stored on disk.
     this.guilds = guilds;

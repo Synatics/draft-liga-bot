@@ -246,6 +246,8 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 | `interactions.js` | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten |
 | `database.js` | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen |
 | `match-store.js`, `league-settings.js` | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups |
+| `json-storage.js` | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien |
+| `data-types.js` | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog |
 | `permissions.js` | Gemeinsame Rollenprüfung und handelnde Person |
 | `diagnostics.js` | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern |
 | `report-handler.js`, `reports.js`, `report-publisher.js` | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus |
@@ -257,6 +259,10 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
 
 Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
+
+Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Spieltag, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der Spieltage und Startdatum; der aktuelle Spieltag wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit weniger Metadaten bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
+
+Beide Speicher aktualisieren ihren Zustand erst nach erfolgreichem Schreiben. SQLite speichert Report und zugehörigen Logeintrag weiterhin in derselben Transaktion. Die JSON-Kompatibilität verwendet eine gemeinsame Hilfsfunktion: Sie schreibt in eine exklusiv angelegte temporäre Datei im Zielordner und ersetzt danach die Zieldatei per Umbenennung. Bei Fehlern bleibt der vorherige Stand erhalten; die Bereinigung entfernt nur die selbst angelegte temporäre Datei. Schlägt auch die Bereinigung fehl, bleiben beide Fehlerursachen für die Diagnose verfügbar. Datenformat und Konfiguration ändern sich dadurch nicht.
 
 ## Technische Fehlerprotokolle
 

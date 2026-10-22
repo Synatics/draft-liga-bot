@@ -1,8 +1,11 @@
-const { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } = require("node:fs");
-const { dirname } = require("node:path");
-const { randomBytes, randomUUID, createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const { randomBytes, createHash } = require("node:crypto");
 const { EmbedBuilder } = require("discord.js");
 const { causedError } = require("./diagnostics");
+const { writeJsonAtomic } = require("./json-storage");
+
+/** @typedef {import('./data-types').Match} Match */
+/** @typedef {import('./data-types').MatchData} MatchData */
 
 class MatchStoreError extends Error {}
 
@@ -22,6 +25,7 @@ function validateResult(result, players) {
   }
 }
 
+/** @param {Match} record @returns {import('./data-types').MatchSnapshot} */
 const snapshot = (record) => ({ ...matchData(record), ...(record.reporter ? { reporter: record.reporter } : {}),
   ...(record.result ? { result: record.result } : {}) });
 
@@ -77,6 +81,7 @@ function validateMatch(match) {
   }
 }
 
+/** @param {Match} match @returns {MatchData} */
 function matchData(match) {
   validateMatch(match);
   return {
@@ -122,6 +127,7 @@ function validateChange(change, match) {
   } catch { throw new MatchStoreError("Ungültiger Ergebnispost für die Korrektur."); }
 }
 
+/** @param {string} text @returns {{version: 1, matches: Match[]}} */
 function parseMatchesDocument(text) {
   const data = JSON.parse(text);
   if (!data || data.version !== 1 || !Array.isArray(data.matches)) throw new Error("Ungültiges Dateiformat des Replay-Archivs");
@@ -135,9 +141,14 @@ function parseMatchesDocument(text) {
 }
 
 class MatchStore {
+  /**
+   * @param {string} filePath JSON path, or database path when storage is supplied.
+   * @param {Pick<import('./database').LigaDatabase, 'readMatches' | 'listMatches' | 'saveMatches'>} [storage]
+   */
   constructor(filePath, storage) {
     this.filePath = filePath;
     this.storage = storage;
+    /** @type {Match[]} */
     this.matches = [];
     try {
       const data = parseMatchesDocument(storage ? storage.readMatches() : readFileSync(filePath, "utf8"));
@@ -152,6 +163,7 @@ class MatchStore {
     }
   }
 
+  /** @param {string} guildId @param {number} [season] @returns {Match[]} */
   list(guildId, season) {
     try {
       return this.storage ? this.storage.listMatches(guildId, season) :
@@ -162,6 +174,7 @@ class MatchStore {
     }
   }
 
+  /** @param {string} id @param {string} guildId @returns {Match} */
   get(id, guildId) {
     const match = this.matches.find((entry) => entry.id === id && entry.guildId === guildId);
     if (!match) throw new MatchStoreError("Dieser Report wurde im Archiv nicht gefunden oder bereits entfernt.");
@@ -175,8 +188,10 @@ class MatchStore {
     return structuredClone(found[0]);
   }
 
+  /** @param {import('./data-types').MatchSnapshot} match @returns {Match} */
   add(match) {
     // Keep the match identity independent of the winner; ownership is stored separately.
+    /** @type {Match} */
     const record = matchData(match);
     const duplicate = this.matches.find((entry) => sameMatch(entry, record) ||
       (entry.change?.kind === "edit" && sameMatch(entry.change.target, record)));
@@ -253,26 +268,25 @@ class MatchStore {
     this.save(this.matches.map((entry) => entry.id === id ? { ...entry, controlsVersion: 1 } : entry), undefined, record);
   }
 
+  /**
+   * Commit before updating the cache; SQLite commits the report and audit event together.
+   * @param {Match[]} matches
+   * @param {import('./data-types').AuditWrite} [event]
+   * @param {Match | import('./data-types').AuditWrite} [record] Safe diagnostic context source.
+   */
   save(matches, event, record = event) {
     const context = { ...record, operation: "archive.write", file: this.storage ? "liga.sqlite" : "matches.json",
       reportId: record?.reportId || record?.id, messageId: record?.messageId || record?.publication?.messageId };
-    if (this.storage) {
-      try { this.storage.saveMatches(matches, event); } catch (error) {
-        throw causedError(MatchStoreError, "Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen.", error, context);
-      }
-      this.matches = structuredClone(matches);
-      return;
-    }
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
     try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      writeFileSync(temporaryPath, JSON.stringify({ version: 1, matches }, null, 2) + "\n", { flag: "wx" });
-      renameSync(temporaryPath, this.filePath);
+      if (this.storage) this.storage.saveMatches(matches, event);
+      else writeJsonAtomic(this.filePath, { version: 1, matches });
     } catch (error) {
-      try { unlinkSync(temporaryPath); } catch { /* No temporary file may have been created. */ }
-      throw causedError(MatchStoreError, "Das Replay konnte nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.", error, context);
+      const message = this.storage
+        ? "Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen."
+        : "Das Replay konnte nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.";
+      throw causedError(MatchStoreError, message, error, context);
     }
-    this.matches = matches;
+    this.matches = structuredClone(matches);
   }
 }
 
