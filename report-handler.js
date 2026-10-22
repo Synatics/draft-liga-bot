@@ -1,7 +1,13 @@
-const { MessageFlags } = require("discord.js");
+const { InteractionContextType, MessageFlags } = require("discord.js");
 const {
-  ReportError, checkParticipantRole, getParticipantOptions, createReportModal,
-  resolveReportContext, resolveReportPlayers, createResultMessage,
+  ReportError,
+  checkParticipantRole,
+  getParticipantOptions,
+  createReportModal,
+  resolveReportContext,
+  resolveReportPlayers,
+  createResultMessage,
+  validateScore,
 } = require("./reports");
 const { normalizeReplayLink } = require("./match-store");
 const { canReport, currentMember, actorOf } = require("./permissions");
@@ -10,16 +16,24 @@ const { logError, interactionContext } = require("./diagnostics");
 const reportCommand = {
   name: "report",
   description: "Öffnet das Formular um ein Match-Ergebnis einzutragen",
-  contexts: [0],
+  contexts: [InteractionContextType.Guild],
 };
 
-function createReportHandler({ config, settingsStore, reportPublisher, memberLoader, logger = console }) {
+function createReportHandler({
+  config,
+  settingsStore,
+  reportPublisher,
+  memberLoader,
+  logger = console,
+}) {
   const { participantRoleId, managerRoleId } = config;
   return async function handleReport(interaction) {
     const logContext = interactionContext(interaction);
     checkParticipantRole(interaction.guild, participantRoleId);
     if (!canReport(interaction, participantRoleId, managerRoleId)) {
-      throw new ReportError("Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen Ergebnisse melden.");
+      throw new ReportError(
+        "Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen Ergebnisse melden.",
+      );
     }
 
     if (interaction.isChatInputCommand()) {
@@ -32,48 +46,86 @@ function createReportHandler({ config, settingsStore, reportPublisher, memberLoa
         return;
       }
       const participants = getParticipantOptions(interaction.guild, participantRoleId);
-      await interaction.showModal(createReportModal(participants, settingsStore.get(interaction.guild.id)));
+      await interaction.showModal(
+        createReportModal(participants, settingsStore.get(interaction.guild.id)),
+      );
       return;
     }
 
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     const { winner, loser, players } = await resolveReportPlayers(
-      interaction.guild, participantRoleId, interaction.fields
+      interaction.guild,
+      participantRoleId,
+      interaction.fields,
     );
     const member = await currentMember(interaction);
     if (!canReport(interaction, participantRoleId, managerRoleId, member)) {
-      throw new ReportError("Du darfst keine Ergebnisse mehr melden. Deine Teilnehmer- oder Verwaltungsberechtigung wurde inzwischen entzogen.");
+      throw new ReportError(
+        "Du darfst keine Ergebnisse mehr melden. Deine Teilnehmer- oder Verwaltungsberechtigung wurde inzwischen entzogen.",
+      );
     }
     const score = interaction.fields.getTextInputValue("score");
+    validateScore(score);
     const link = normalizeReplayLink(interaction.fields.getTextInputValue("link"));
     // Read the season after the member lookups, in case an admin changed it meanwhile.
     const context = resolveReportContext(
-      interaction.customId, interaction.fields, settingsStore.get(interaction.guild.id)
+      interaction.customId,
+      interaction.fields,
+      settingsStore.get(interaction.guild.id),
     );
     const publication = await reportPublisher.publish(
-      { guildId: interaction.guild.id, channelId: interaction.channelId, ...context, players, link,
-        reporter: actorOf(interaction, member), result: { winnerId: players[0].id, loserId: players[1].id, score } },
+      {
+        guildId: interaction.guild.id,
+        channelId: interaction.channelId,
+        ...context,
+        players,
+        link,
+        reporter: actorOf(interaction, member),
+        result: { winnerId: players[0].id, loserId: players[1].id, score },
+      },
       interaction.channel,
-      createResultMessage(winner, loser, score, link, context)
+      createResultMessage(winner, loser, score, link, context),
     );
-    if (publication.error) logError(
-      publication.status === "published-unconfirmed" ? "Fehler beim Speichern des Versandstatus:" : "Fehler beim Posten des gespeicherten Reports:",
-      publication.error, { ...logContext, ...context, reportId: publication.reportId, messageId: publication.messageId,
-        operation: publication.status === "published-unconfirmed" ? "report.status" : "report.publish" }, logger
-    );
-    if (publication.storageError) logError("Fehler beim Speichern des Versandstatus:", publication.storageError,
-      { ...logContext, reportId: publication.reportId, operation: "report.status" }, logger);
+    if (publication.error)
+      logError(
+        publication.status === "published-unconfirmed"
+          ? "Fehler beim Speichern des Versandstatus:"
+          : "Fehler beim Posten des gespeicherten Reports:",
+        publication.error,
+        {
+          ...logContext,
+          ...context,
+          reportId: publication.reportId,
+          messageId: publication.messageId,
+          operation:
+            publication.status === "published-unconfirmed" ? "report.status" : "report.publish",
+        },
+        logger,
+      );
+    if (publication.storageError)
+      logError(
+        "Fehler beim Speichern des Versandstatus:",
+        publication.storageError,
+        { ...logContext, reportId: publication.reportId, operation: "report.status" },
+        logger,
+      );
     const messageLink = publication.messageId
-      ? `https://discord.com/channels/${interaction.guild.id}/${interaction.channelId}/${publication.messageId}` : null;
+      ? `https://discord.com/channels/${interaction.guild.id}/${interaction.channelId}/${publication.messageId}`
+      : null;
     const replies = {
       published: "✅ Ergebnis erfolgreich gepostet!",
       duplicate: `ℹ️ Dieses Match wurde bereits gepostet: <${messageLink}>`,
       "in-progress": "ℹ️ Dieses Match wird gerade gepostet. Bitte warte kurz.",
-      maintenance: "ℹ️ Dieser Report wird gerade korrigiert oder entfernt. Bitte warte, bis die Änderung abgeschlossen ist.",
-      legacy: "ℹ️ Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
-      failed: "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
-      "failed-unconfirmed": "❌ Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
-      uncertain: "⚠️ Bei diesem Match ist unklar, ob Discord den Ergebnis-Post bereits erhalten hat. Damit kein doppelter Post entsteht, wird es nicht erneut gesendet. Bitte prüfe den Kanal und lass bei Bedarf den Versandstatus im Archiv prüfen.",
+      maintenance:
+        "ℹ️ Dieser Report wird gerade korrigiert oder entfernt. Bitte warte, bis die Änderung abgeschlossen ist.",
+      legacy:
+        "ℹ️ Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
+      failed:
+        "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
+      "failed-unconfirmed":
+        "❌ Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
+      uncertain:
+        "⚠️ Bei diesem Match ist unklar, ob Discord den Ergebnis-Post bereits erhalten hat. Damit kein doppelter Post entsteht, wird es nicht erneut gesendet. Bitte prüfe den Kanal und lass bei Bedarf den Versandstatus im Archiv prüfen.",
       "published-unconfirmed": `⚠️ Das Ergebnis wurde gepostet: <${messageLink}>. Der Versandstatus konnte aber nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher.`,
     };
     await interaction.editReply({

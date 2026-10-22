@@ -23,11 +23,21 @@ class ReportPublisher {
       this.store.setPublication(record.id, { status: "sending" });
       let sent;
       try {
-        sent = await channel.send({ ...message, components: reportButtons(record.id), nonce: record.id, enforceNonce: true });
+        sent = await channel.send({
+          ...message,
+          components: reportButtons(record.id),
+          nonce: record.id,
+          enforceNonce: true,
+        });
       } catch (error) {
         // A timeout or server failure may occur after Discord accepted the message.
         // Only an explicit client-error response confirms that no post was created.
-        if (Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        if (
+          Number.isInteger(error.status) &&
+          error.status >= 400 &&
+          error.status < 500 &&
+          error.status !== 408
+        ) {
           try {
             this.store.setPublication(record.id, { status: "pending" });
           } catch (storageError) {

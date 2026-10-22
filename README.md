@@ -63,15 +63,15 @@ LEAGUE_MANAGER_ROLE_ID=deine-ligaverwaltungsrollen-id
 # DATA_DIR=./data
 ```
 
-| Variable | Bedeutung |
-| --- | --- |
-| `DISCORD_TOKEN` | Pflichtwert: Bot-Token ohne `Bot`-Präfix |
-| `CLIENT_ID` | Pflichtwert: Application-ID desselben Bots |
-| `PARTICIPANT_ROLE_ID` | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports und Logabruf |
-| `LEAGUE_MANAGER_ROLE_ID` | Optional: separate Verwaltungsrolle; ohne Wert verwalten nur Serververwalter die Liga |
-| `DATA_DIR` | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount |
-| `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad |
-| `RAILWAY_ENVIRONMENT_ID` | Aktiviert die Railway-Volume-Prüfung |
+| Variable                    | Bedeutung                                                                                 |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`             | Pflichtwert: Bot-Token ohne `Bot`-Präfix                                                  |
+| `CLIENT_ID`                 | Pflichtwert: Application-ID desselben Bots                                                |
+| `PARTICIPANT_ROLE_ID`       | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports und Logabruf |
+| `LEAGUE_MANAGER_ROLE_ID`    | Optional: separate Verwaltungsrolle; ohne Wert verwalten nur Serververwalter die Liga     |
+| `DATA_DIR`                  | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount    |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad                                                   |
+| `RAILWAY_ENVIRONMENT_ID`    | Aktiviert die Railway-Volume-Prüfung                                                      |
 
 Discord-IDs müssen 17–20 Ziffern haben. Ein gesetzter, ungültiger Rollenwert verhindert den Start. `.env`, Datenbank und Backups gehören nicht ins Repository.
 
@@ -85,15 +85,15 @@ Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine
 
 ## Berechtigungen im Bot
 
-| Aktion | Freigabe |
-| --- | --- |
-| `/report` | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter |
-| `/suchen` | Anwendungsbefehle im Kanal verwenden dürfen; zusätzliche Kanal-/Integrationsregeln sind in Discord konfigurierbar |
-| Report bearbeiten | Gespeicherte meldende Person mit aktueller Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter |
-| Report löschen | Ligaverwaltungsrolle oder Serververwalter |
-| `/report-entfernen` | Ligaverwaltungsrolle oder Serververwalter |
-| `/liga season`, `/liga status` | Ligaverwaltungsrolle oder Serververwalter |
-| `/liga log season:…` | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter |
+| Aktion                         | Freigabe                                                                                                          |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `/report`                      | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter                                               |
+| `/suchen`                      | Anwendungsbefehle im Kanal verwenden dürfen; zusätzliche Kanal-/Integrationsregeln sind in Discord konfigurierbar |
+| Report bearbeiten              | Gespeicherte meldende Person mit aktueller Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter             |
+| Report löschen                 | Ligaverwaltungsrolle oder Serververwalter                                                                         |
+| `/report-entfernen`            | Ligaverwaltungsrolle oder Serververwalter                                                                         |
+| `/liga season`, `/liga status` | Ligaverwaltungsrolle oder Serververwalter                                                                         |
+| `/liga log season:…`           | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter                                               |
 
 Die andere am Match beteiligte Person bekommt dadurch keine Bearbeitungsrechte. Die Melder-ID wird bei der ersten Meldung gespeichert und bleibt bei Korrekturen erhalten. Ein erneut gemeldetes Duplikat überträgt diese Zuordnung nicht.
 
@@ -170,12 +170,12 @@ Zugestellte Such-DMs und Logdateien sind Momentaufnahmen und werden nach einer K
 
 Die aktive Datei ist **`liga.sqlite`** im Datenverzeichnis:
 
-| Tabelle | Inhalt |
-| --- | --- |
-| `settings` | Liga-Konfiguration pro Server |
-| `reports` | Suchmetadaten, Melder, Ergebnis, Versandstatus, Nachrichten-ID und vorgemerkte Änderungen |
-| `audit_events` | Eigenständige Vorher-/Nachher-Protokolle, unabhängig vom Fortbestand des Reports |
-| `metadata` | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat |
+| Tabelle        | Inhalt                                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| `settings`     | Liga-Konfiguration pro Server                                                             |
+| `reports`      | Suchmetadaten, Melder, Ergebnis, Versandstatus, Nachrichten-ID und vorgemerkte Änderungen |
+| `audit_events` | Eigenständige Vorher-/Nachher-Protokolle, unabhängig vom Fortbestand des Reports          |
+| `metadata`     | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat  |
 
 Das Protokoll enthält bewusst auch Gewinner und Score. Die beschriebene Rollenfreigabe gilt daher für den Abruf. Bot-Tokens werden nicht in SQLite gespeichert.
 
@@ -233,28 +233,35 @@ Lokale Einstellungen und Daten werden nicht automatisch zu Railway übertragen. 
 ## Entwicklung
 
 ```powershell
-npm test
+npm ci
+npm run check
 ```
+
+`npm run check` führt Lint-Prüfung, Formatprüfung und Tests nacheinander aus. Einzeln sind sie über `npm run lint`, `npm run format:check` und `npm test` verfügbar. `npm run format` formatiert die Projektdateien automatisch; es startet den Bot nicht.
+
+Die [ESLint-Konfiguration](https://eslint.org/docs/latest/use/configure/configuration-files) verwendet empfohlene JavaScript-Regeln für Node.js/CommonJS sowie `no-var`, `prefer-const` und strikte Vergleiche (mit erlaubten Null-/Undefined-Prüfungen über `== null`). [Prettier](https://prettier.io/docs/install) sorgt für einheitliche Formatierung. Beide Werkzeuge sind als fest versionierte Entwicklungsabhängigkeiten installiert; für den laufenden Bot werden sie nicht benötigt. `.editorconfig` und `.gitattributes` legen UTF-8, zwei Leerzeichen und LF-Zeilenenden fest. Lokale Daten, Zugangsdaten und generierte Dateien werden von den Werkzeugen ausgeschlossen.
 
 Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulierte Discord-Interaktionen. Sie lesen keine produktiven Tokens und senden keine echten Nachrichten. Abgedeckt sind Übernahme/Wiederanlauf, atomare Report-/Log-Speicherung, Backups/Wiederherstellung, Button-Zuordnung, Melder- und Rollenrechte, Rechteentzug, Pflicht-Season, DMs, UTF-8-Export, Spoiler, Duplikate, Kalender-/Sommerzeitgrenzen sowie Fehlerdiagnosen ohne Zugangsdaten.
 
-| Dateien | Aufgabe |
-| --- | --- |
-| `index.js` | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden |
-| `bot.js` | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups |
-| `startup.js` | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern |
-| `interactions.js` | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten |
-| `database.js` | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen |
-| `match-store.js`, `league-settings.js` | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups |
-| `json-storage.js` | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien |
-| `data-types.js` | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog |
-| `permissions.js` | Gemeinsame Rollenprüfung und handelnde Person |
-| `diagnostics.js` | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern |
-| `report-handler.js`, `reports.js`, `report-publisher.js` | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus |
-| `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen |
-| `league-commands.js`, `audit-commands.js` | Verwaltung und Logdatei per DM |
-| `search-commands.js` | Replay-Suche |
-| `database-backups.js`, `data-backups.js`, `backup.js` | SQLite- und ältere JSON-Sicherungen |
+Beim Erstellen und Korrigieren gilt dieselbe Score-Prüfung: 1 bis 100 Zeichen und mindestens ein Zeichen, das kein Leerraum ist. Ungültige Eingaben führen zu einer privaten Rückmeldung, bevor ein Post oder Archiv-/Logeintrag verändert wird.
+
+| Dateien                                                          | Aufgabe                                                                                              |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `index.js`                                                       | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden                 |
+| `bot.js`                                                         | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups                 |
+| `startup.js`                                                     | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern                |
+| `interactions.js`                                                | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten                               |
+| `database.js`                                                    | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen                                      |
+| `match-store.js`, `league-settings.js`                           | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups                        |
+| `json-storage.js`                                                | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien |
+| `data-types.js`                                                  | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog         |
+| `permissions.js`                                                 | Gemeinsame Rollenprüfung und handelnde Person                                                        |
+| `diagnostics.js`                                                 | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern                  |
+| `report-handler.js`, `reports.js`, `report-publisher.js`         | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus                                |
+| `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen                                                 |
+| `league-commands.js`, `audit-commands.js`                        | Verwaltung und Logdatei per DM                                                                       |
+| `search-commands.js`                                             | Replay-Suche                                                                                         |
+| `database-backups.js`, `data-backups.js`, `backup.js`            | SQLite- und ältere JSON-Sicherungen                                                                  |
 
 Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
 
@@ -270,15 +277,15 @@ Technische Fehler erscheinen im Terminal beziehungsweise in den Laufzeit-Logs de
 
 Speicher- und Discord-Fehler behalten ihre ursprüngliche Ursache über `Error.cause`. Dadurch ist beispielsweise bei einer fehlgeschlagenen Reportänderung erkennbar, ob Discord die Änderung abgelehnt hat oder danach die Speicherung gescheitert ist. Scheitert zusätzlich ein Datenbank-Rollback, werden beide Ursachen ausgewertet. Eine technische Ursache wird auch dann protokolliert, wenn der Nutzer eine verständliche Fehlermeldung erhält. Normale Eingabefehler und fehlende Rollen erzeugen keine technischen Fehlereinträge.
 
-| Diagnose | Bedeutung |
-| --- | --- |
-| `EACCES`, `EPERM` | Dateirechte oder Dateisperren prüfen |
-| `ENOSPC`, `EDQUOT` | Datenträger voll oder Speicherquote ausgeschöpft |
-| `SQLITE_READONLY` | Schreibzugriff auf die Datenbank fehlt |
-| `SQLITE_FULL` | SQLite kann wegen eines Speicher- oder Datenbanklimits nicht weiter schreiben |
-| `SQLITE_BUSY`, `SQLITE_LOCKED` | Ein anderer Zugriff blockiert die Datenbank |
-| `SQLITE_CORRUPT`, `SQLITE_NOTADB` | Datenbankdatei beschädigt oder kein lesbares SQLite-Format |
-| Discord-Code `50013` / HTTP `403` | Discord-Berechtigungen fehlen |
+| Diagnose                          | Bedeutung                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| `EACCES`, `EPERM`                 | Dateirechte oder Dateisperren prüfen                                          |
+| `ENOSPC`, `EDQUOT`                | Datenträger voll oder Speicherquote ausgeschöpft                              |
+| `SQLITE_READONLY`                 | Schreibzugriff auf die Datenbank fehlt                                        |
+| `SQLITE_FULL`                     | SQLite kann wegen eines Speicher- oder Datenbanklimits nicht weiter schreiben |
+| `SQLITE_BUSY`, `SQLITE_LOCKED`    | Ein anderer Zugriff blockiert die Datenbank                                   |
+| `SQLITE_CORRUPT`, `SQLITE_NOTADB` | Datenbankdatei beschädigt oder kein lesbares SQLite-Format                    |
+| Discord-Code `50013` / HTTP `403` | Discord-Berechtigungen fehlen                                                 |
 
 SQLite-Diagnosen enthalten neben `ERR_SQLITE_ERROR` den numerischen SQLite-Code und, soweit zugeordnet, dessen Namen. Auch erweiterte Codes werden ihrer Hauptkategorie zugeordnet. [SQLite-Fehlercodes](https://www.sqlite.org/rescode.html)
 
@@ -288,17 +295,17 @@ Das ist unabhängig vom fachlichen Änderungsprotokoll in SQLite: `/liga log sea
 
 ## Fehlerbehebung
 
-| Problem | Prüfen |
-| --- | --- |
-| `EBADENGINE` oder fehlendes `node:sqlite` | Node.js 24 aktivieren und `npm ci` ausführen |
-| Datenbank-/Übernahmefehler beim Start | Datenbank, JSON-Dateien, Schreibrechte und Speicher prüfen; keinen leeren Ersatz anlegen |
-| Fehlender Intent | Server Members Intent im Developer Portal aktivieren |
-| Veraltete Rechtsklick-Aktionen oder Slash-Optionen | Bot neu starten, Discord mit Strg+R/F5 neu laden, richtige Anwendung prüfen |
-| Ligaverwaltung erhält keine Freigabe | Rollen-ID, Zuweisung und Kanal-/Integrationsrechte prüfen |
-| Teilnehmer sieht `/liga log` nicht | Nicht die ganze `/liga`-Gruppe auf Admins beschränken; Anwendungsbefehle freigeben |
-| Bearbeiten wird abgelehnt | Es zählt der gespeicherte Melder; alte Melder können unbekannt sein |
-| Älterer Post hat keine Buttons | Bestätigte Nachrichten-ID im Archiv und Zugriff auf den Post erforderlich |
-| Post manuell gelöscht | Verwaltung nutzt `/report-entfernen` mit Season und Spieler |
-| DM bleibt aus | DMs von Servermitgliedern erlauben und Bot-Blockierung prüfen |
-| Unterbrochene Änderung | Speicher/Kanalrechte prüfen und denselben Vorgang erneut bestätigen |
-| Ältere DM zeigt alte Werte | Neue Suche bzw. neues Protokoll anfordern |
+| Problem                                            | Prüfen                                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `EBADENGINE` oder fehlendes `node:sqlite`          | Node.js 24 aktivieren und `npm ci` ausführen                                             |
+| Datenbank-/Übernahmefehler beim Start              | Datenbank, JSON-Dateien, Schreibrechte und Speicher prüfen; keinen leeren Ersatz anlegen |
+| Fehlender Intent                                   | Server Members Intent im Developer Portal aktivieren                                     |
+| Veraltete Rechtsklick-Aktionen oder Slash-Optionen | Bot neu starten, Discord mit Strg+R/F5 neu laden, richtige Anwendung prüfen              |
+| Ligaverwaltung erhält keine Freigabe               | Rollen-ID, Zuweisung und Kanal-/Integrationsrechte prüfen                                |
+| Teilnehmer sieht `/liga log` nicht                 | Nicht die ganze `/liga`-Gruppe auf Admins beschränken; Anwendungsbefehle freigeben       |
+| Bearbeiten wird abgelehnt                          | Es zählt der gespeicherte Melder; alte Melder können unbekannt sein                      |
+| Älterer Post hat keine Buttons                     | Bestätigte Nachrichten-ID im Archiv und Zugriff auf den Post erforderlich                |
+| Post manuell gelöscht                              | Verwaltung nutzt `/report-entfernen` mit Season und Spieler                              |
+| DM bleibt aus                                      | DMs von Servermitgliedern erlauben und Bot-Blockierung prüfen                            |
+| Unterbrochene Änderung                             | Speicher/Kanalrechte prüfen und denselben Vorgang erneut bestätigen                      |
+| Ältere DM zeigt alte Werte                         | Neue Suche bzw. neues Protokoll anfordern                                                |

@@ -13,6 +13,14 @@ const SPACER = "⠀";
 
 class ReportError extends Error {}
 
+function validateScore(score) {
+  if (typeof score !== "string" || !score.trim() || score.length > 100) {
+    throw new ReportError(
+      "Bitte gib ein Ergebnis mit 1 bis 100 Zeichen ein. Nur Leerzeichen reichen nicht.",
+    );
+  }
+}
+
 function centerText(text, targetLength = 16) {
   const totalPadding = Math.max(0, targetLength - text.length);
   const sidePadding = Math.floor(totalPadding / 2);
@@ -25,12 +33,12 @@ function checkParticipantRole(guild, roleId) {
   }
   if (!roleId) {
     throw new ReportError(
-      "Die Teilnehmerrolle ist noch nicht eingerichtet. Bitte hinterlege PARTICIPANT_ROLE_ID in der .env-Datei."
+      "Die Teilnehmerrolle ist noch nicht eingerichtet. Bitte hinterlege PARTICIPANT_ROLE_ID in der .env-Datei.",
     );
   }
   if (roleId === guild.id || !guild.roles.cache.has(roleId)) {
     throw new ReportError(
-      "Die Teilnehmerrolle wurde auf diesem Server nicht gefunden. Bitte prüfe PARTICIPANT_ROLE_ID."
+      "Die Teilnehmerrolle wurde auf diesem Server nicht gefunden. Bitte prüfe PARTICIPANT_ROLE_ID.",
     );
   }
 }
@@ -45,7 +53,9 @@ function getParticipantOptions(guild, roleId) {
     throw new ReportError("Für ein Match brauchen mindestens zwei Personen die Teilnehmerrolle.");
   }
   if (participants.length > 25) {
-    throw new ReportError("Das Dropdown unterstützt höchstens 25 Personen mit der Teilnehmerrolle.");
+    throw new ReportError(
+      "Das Dropdown unterstützt höchstens 25 Personen mit der Teilnehmerrolle.",
+    );
   }
 
   const nameCounts = new Map();
@@ -56,24 +66,24 @@ function getParticipantOptions(guild, roleId) {
   return participants.map((member) => ({
     label: member.displayName,
     value: member.id,
-    ...(nameCounts.get(member.displayName) > 1
-      ? { description: `@${member.user.username}` }
-      : {}),
+    ...(nameCounts.get(member.displayName) > 1 ? { description: `@${member.user.username}` } : {}),
   }));
 }
 
 function createReportModal(participants, settings) {
   validateSettings(settings);
   const playerSelect = (customId, label) =>
-    new LabelBuilder().setLabel(label).setStringSelectMenuComponent(
-      new StringSelectMenuBuilder()
-        .setCustomId(customId)
-        .setPlaceholder("Teilnehmer auswählen")
-        .setMinValues(1)
-        .setMaxValues(1)
-        .setRequired(true)
-        .addOptions(participants)
-    );
+    new LabelBuilder()
+      .setLabel(label)
+      .setStringSelectMenuComponent(
+        new StringSelectMenuBuilder()
+          .setCustomId(customId)
+          .setPlaceholder("Teilnehmer auswählen")
+          .setMinValues(1)
+          .setMaxValues(1)
+          .setRequired(true)
+          .addOptions(participants),
+      );
 
   return new ModalBuilder()
     .setCustomId(`submit_report:${settings.season}`)
@@ -86,30 +96,36 @@ function createReportModal(participants, settings) {
           .setMinValues(1)
           .setMaxValues(1)
           .setRequired(true)
-          .addOptions(Array.from({ length: settings.matchdays }, (_, index) => ({
-            label: `Spieltag ${index + 1}`,
-            value: String(index + 1),
-            default: index + 1 === settings.currentMatchday,
-          })))
+          .addOptions(
+            Array.from({ length: settings.matchdays }, (_, index) => ({
+              label: `Spieltag ${index + 1}`,
+              value: String(index + 1),
+              default: index + 1 === settings.currentMatchday,
+            })),
+          ),
       ),
       playerSelect("winner", "Gewinner"),
       playerSelect("loser", "Verlierer"),
-      new LabelBuilder().setLabel("Ergebnis").setTextInputComponent(
-        new TextInputBuilder()
-          .setCustomId("score")
-          .setPlaceholder("z.B. 2-0")
-          .setStyle(TextInputStyle.Short)
-          .setMaxLength(100)
-          .setRequired(true)
-      ),
-      new LabelBuilder().setLabel("Replay Link").setTextInputComponent(
-        new TextInputBuilder()
-          .setCustomId("link")
-          .setPlaceholder("https://...")
-          .setStyle(TextInputStyle.Paragraph)
-          .setMaxLength(1024)
-          .setRequired(true)
-      )
+      new LabelBuilder()
+        .setLabel("Ergebnis")
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId("score")
+            .setPlaceholder("z.B. 2-0")
+            .setStyle(TextInputStyle.Short)
+            .setMaxLength(100)
+            .setRequired(true),
+        ),
+      new LabelBuilder()
+        .setLabel("Replay Link")
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId("link")
+            .setPlaceholder("https://...")
+            .setStyle(TextInputStyle.Paragraph)
+            .setMaxLength(1024)
+            .setRequired(true),
+        ),
     );
 }
 
@@ -121,9 +137,15 @@ function resolveReportContext(customId, fields, settings) {
   }
   const selectedDays = fields.getStringSelectValues("matchday");
   const matchday = Number(selectedDays[0]);
-  if (selectedDays.length !== 1 || !/^[1-9]\d*$/.test(selectedDays[0]) ||
-      !Number.isSafeInteger(matchday) || matchday > settings.matchdays) {
-    throw new ReportError("Dieser Spieltag gehört nicht zur aktuellen Season. Bitte öffne /report erneut.");
+  if (
+    selectedDays.length !== 1 ||
+    !/^[1-9]\d*$/.test(selectedDays[0]) ||
+    !Number.isSafeInteger(matchday) ||
+    matchday > settings.matchdays
+  ) {
+    throw new ReportError(
+      "Dieser Spieltag gehört nicht zur aktuellen Season. Bitte öffne /report erneut.",
+    );
   }
   return { season: settings.season, matchday };
 }
@@ -133,7 +155,9 @@ async function resolveReportPlayers(guild, roleId, fields) {
   const winnerIds = fields.getStringSelectValues("winner");
   const loserIds = fields.getStringSelectValues("loser");
   if (winnerIds.length !== 1 || loserIds.length !== 1 || winnerIds[0] === loserIds[0]) {
-    throw new ReportError("Bitte wähle zwei unterschiedliche Teilnehmer als Gewinner und Verlierer.");
+    throw new ReportError(
+      "Bitte wähle zwei unterschiedliche Teilnehmer als Gewinner und Verlierer.",
+    );
   }
 
   const members = await Promise.all(
@@ -145,12 +169,12 @@ async function resolveReportPlayers(guild, roleId, fields) {
         if (error.code === 10007) return null;
         throw error;
       }
-    })
+    }),
   );
 
   if (members.some((member) => !member || member.user.bot || !member.roles.cache.has(roleId))) {
     throw new ReportError(
-      "Mindestens eine ausgewählte Person ist nicht mehr Teilnehmer. Bitte öffne /report erneut."
+      "Mindestens eine ausgewählte Person ist nicht mehr Teilnehmer. Bitte öffne /report erneut.",
     );
   }
 
@@ -173,14 +197,15 @@ function createResultEmbed(winner, loser, score, link) {
       { name: "Gewinner", value: `|| ${centerText(escapeMarkdown(winner))} ||`, inline: true },
       { name: "Verlierer", value: `|| ${centerText(escapeMarkdown(loser))} ||`, inline: true },
       { name: "Score", value: `|| ${centerText(escapeMarkdown(score), 6)} ||`, inline: false },
-      { name: "Replay Link", value: link, inline: false }
+      { name: "Replay Link", value: link, inline: false },
     )
     .setTimestamp();
 }
 
 function createResultMessage(winner, loser, score, link, context) {
-  const embed = createResultEmbed(winner, loser, score, link)
-    .setAuthor({ name: `Season ${context.season} · Spieltag ${context.matchday}` });
+  const embed = createResultEmbed(winner, loser, score, link).setAuthor({
+    name: `Season ${context.season} · Spieltag ${context.matchday}`,
+  });
   return {
     embeds: [embed],
     allowedMentions: { parse: [] },
@@ -189,6 +214,7 @@ function createResultMessage(winner, loser, score, link, context) {
 
 module.exports = {
   ReportError,
+  validateScore,
   checkParticipantRole,
   getParticipantOptions,
   createReportModal,

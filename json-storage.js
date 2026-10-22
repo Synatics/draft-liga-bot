@@ -26,15 +26,23 @@ function writeJsonAtomic(filePath, document) {
   } catch (error) {
     const errors = [error];
     if (descriptor !== undefined) {
-      try { fs.closeSync(descriptor); } catch (closeError) { errors.push(closeError); }
+      try {
+        fs.closeSync(descriptor);
+      } catch (closeError) {
+        errors.push(closeError);
+      }
     }
     if (owned) {
-      try { fs.unlinkSync(temporaryPath); } catch (cleanupError) {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch (cleanupError) {
         if (cleanupError.code !== "ENOENT") errors.push(cleanupError);
       }
     }
     if (errors.length > 1) {
-      throw new AggregateError(errors, "JSON-Speicherung und Bereinigung sind fehlgeschlagen.", { cause: error });
+      throw new AggregateError(errors, "JSON-Speicherung und Bereinigung sind fehlgeschlagen.", {
+        cause: error,
+      });
     }
     throw error;
   }

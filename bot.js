@@ -36,7 +36,8 @@ async function startBot({
 
     function prepareGuild(guild) {
       if (!memberLoads.has(guild.id)) {
-        const load = guild.members.fetch({ time: 15000 })
+        const load = guild.members
+          .fetch({ time: 15000 })
           .then(() => loadedGuilds.add(guild.id))
           .finally(() => memberLoads.delete(guild.id));
         memberLoads.set(guild.id, load);
@@ -45,29 +46,65 @@ async function startBot({
     }
 
     function warmGuild(guild) {
-      prepareGuild(guild).catch((error) => logError("Fehler beim Laden der Teilnehmer:", error,
-        { operation: "members.load", guildId: guild.id }, logger));
+      prepareGuild(guild).catch((error) =>
+        logError(
+          "Fehler beim Laden der Teilnehmer:",
+          error,
+          { operation: "members.load", guildId: guild.id },
+          logger,
+        ),
+      );
     }
 
-    client.on(Events.Error, (error) => logError("Fehler der Discord-Verbindung:", error, { operation: "discord.connection" }, logger));
+    client.on(Events.Error, (error) =>
+      logError(
+        "Fehler der Discord-Verbindung:",
+        error,
+        { operation: "discord.connection" },
+        logger,
+      ),
+    );
     client.on(Events.ClientReady, () => {
       logger.log("✅ Bot ist mit Discord verbunden.");
       loadedGuilds.clear();
       for (const guild of client.guilds.cache.values()) warmGuild(guild);
-      installReportButtons(client, matchStore, logger).catch((error) => logError("Ältere Ergebnisposts konnten nicht mit Buttons ergänzt werden.",
-        error, { operation: "buttons.install" }, logger));
+      installReportButtons(client, matchStore, logger).catch((error) =>
+        logError(
+          "Ältere Ergebnisposts konnten nicht mit Buttons ergänzt werden.",
+          error,
+          { operation: "buttons.install" },
+          logger,
+        ),
+      );
     });
     client.on(Events.GuildCreate, warmGuild);
     client.on(Events.GuildDelete, (guild) => loadedGuilds.delete(guild.id));
 
     const memberLoader = { isLoaded: (guildId) => loadedGuilds.has(guildId), warm: warmGuild };
-    client.on(Events.InteractionCreate, createInteractionHandler({
-      config, database: state.database, settingsStore, matchStore, reportPublisher, reportManager, memberLoader, logger,
-    }));
+    client.on(
+      Events.InteractionCreate,
+      createInteractionHandler({
+        config,
+        database: state.database,
+        settingsStore,
+        matchStore,
+        reportPublisher,
+        reportManager,
+        memberLoader,
+        logger,
+      }),
+    );
     const rest = createRest({ version: "10", timeout: 15_000, retries: 1 }).setToken(config.token);
     await connectDiscord(client, rest, commands, config, { logger });
     const backupTimer = scheduleBackups(new SqliteBackups(databasePath), logger);
-    return { client, database: state.database, databasePath, settingsStore, matchStore, backupTimer };
+    return {
+      client,
+      database: state.database,
+      databasePath,
+      settingsStore,
+      matchStore,
+      backupTimer,
+    };
   } catch (error) {
     await cleanupStartup(client, state?.database, { logger });
     throw error;

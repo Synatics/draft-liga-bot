@@ -10,9 +10,16 @@ const CHANNEL = "400000000000000001";
 const JAN = "200000000000000001";
 const MAX = "200000000000000002";
 const record = (overrides = {}) => ({
-  guildId: GUILD, channelId: CHANNEL, season: 4, matchday: 1,
-  players: [{ id: MAX, name: "Max" }, { id: JAN, name: "Jan" }],
-  link: "https://replay.pokemonshowdown.com/gen9ou-123456789", ...overrides,
+  guildId: GUILD,
+  channelId: CHANNEL,
+  season: 4,
+  matchday: 1,
+  players: [
+    { id: MAX, name: "Max" },
+    { id: JAN, name: "Jan" },
+  ],
+  link: "https://replay.pokemonshowdown.com/gen9ou-123456789",
+  ...overrides,
 });
 
 function temporaryStore(t) {
@@ -32,8 +39,14 @@ test("match archive survives restarts and stores only search metadata, separated
   store.add(record({ guildId: "300000000000000002" }));
   const restarted = new MatchStore(filePath);
   const matches = restarted.list(GUILD);
-  assert.deepEqual(matches.map((match) => match.season), [4, 5]);
-  assert.deepEqual(matches[0].players, [{ id: JAN, name: "Jan" }, { id: MAX, name: "Max" }]);
+  assert.deepEqual(
+    matches.map((match) => match.season),
+    [4, 5],
+  );
+  assert.deepEqual(matches[0].players, [
+    { id: JAN, name: "Jan" },
+    { id: MAX, name: "Max" },
+  ]);
   const raw = readFileSync(filePath, "utf8");
   assert.ok(!raw.includes("score"));
   assert.ok(!raw.includes("winner"));
@@ -44,7 +57,9 @@ test("match archive survives restarts and stores only search metadata, separated
 test("repeated reports do not duplicate an archived replay, while separate matchdays remain distinct", (t) => {
   const { store, filePath } = temporaryStore(t);
   const first = store.add(record());
-  const duplicate = store.add(record({ players: [...record().players].reverse(), link: ` ${record().link} ` }));
+  const duplicate = store.add(
+    record({ players: [...record().players].reverse(), link: ` ${record().link} ` }),
+  );
   assert.equal(duplicate.id, first.id);
   assert.deepEqual(first.publication, { status: "pending" });
   store.add(record({ matchday: 2 }));
@@ -60,7 +75,10 @@ test("publication reservations and message IDs survive restarts without resettin
   restarted.setPublication(match.id, { status: "published", messageId: "500000000000000001" });
   const published = new MatchStore(filePath).add(record());
   assert.deepEqual(published.publication, { status: "published", messageId: "500000000000000001" });
-  assert.throws(() => restarted.setPublication(match.id, { status: "pending" }), /Ungültiger Wechsel/);
+  assert.throws(
+    () => restarted.setPublication(match.id, { status: "pending" }),
+    /Ungültiger Wechsel/,
+  );
 });
 
 test("older archives stay readable and duplicates remain recognizable without inventing a posting status", (t) => {
@@ -89,7 +107,8 @@ test("partial or invalid publication metadata is rejected instead of silently al
   const { filePath } = temporaryStore(t);
   const id = "a".repeat(24);
   for (const metadata of [
-    { id }, { publication: { status: "pending" } },
+    { id },
+    { publication: { status: "pending" } },
     { id, publication: { status: "unknown" } },
     { id, publication: { status: "published" } },
     { id, publication: { status: "sending", messageId: "500000000000000001" } },
@@ -112,8 +131,11 @@ test("archive write errors preserve all previous matches in memory and on disk",
 
 test("a corrupt archive is reported and never silently overwritten", (t) => {
   const { filePath } = temporaryStore(t);
-  for (const content of ["{invalid", JSON.stringify({ version: 2, matches: [] }),
-    JSON.stringify({ version: 1, matches: [record({ players: [] })] })]) {
+  for (const content of [
+    "{invalid",
+    JSON.stringify({ version: 2, matches: [] }),
+    JSON.stringify({ version: 1, matches: [record({ players: [] })] }),
+  ]) {
     writeFileSync(filePath, content);
     assert.throws(() => new MatchStore(filePath), /nicht gelesen/);
     assert.equal(readFileSync(filePath, "utf8"), content);
@@ -122,12 +144,23 @@ test("a corrupt archive is reported and never silently overwritten", (t) => {
 
 test("invalid replay URLs and malformed metadata cannot enter the archive", (t) => {
   const { store } = temporaryStore(t);
-  for (const link of ["kein-link", "javascript:alert(1)", "https://", "https://example.org/a b",
-    "https://example.org\n@everyone", "https://example.org/" + "a".repeat(1024)]) {
+  for (const link of [
+    "kein-link",
+    "javascript:alert(1)",
+    "https://",
+    "https://example.org/a b",
+    "https://example.org\n@everyone",
+    "https://example.org/" + "a".repeat(1024),
+  ]) {
     assert.throws(() => store.add(record({ link })), /Replay-Link/);
   }
-  for (const overrides of [{ season: 0 }, { season: 10000 }, { matchday: 26 }, { guildId: "other" },
-    { players: [record().players[0], record().players[0]] }]) {
+  for (const overrides of [
+    { season: 0 },
+    { season: 10000 },
+    { matchday: 26 },
+    { guildId: "other" },
+    { players: [record().players[0], record().players[0]] },
+  ]) {
     assert.throws(() => store.add(record(overrides)), /Ungültige Daten/);
   }
   assert.equal(normalizeReplayLink(" https://example.org/a>test "), "https://example.org/a%3Etest");

@@ -12,21 +12,42 @@ const { ReportPublisher } = require("./report-publisher");
 const { ReportManager } = require("./report-manager");
 const { createResultMessage } = require("./reports");
 
-const GUILD = "300000000000000001", CHANNEL = "400000000000000001", MESSAGE = "500000000000000001", BOT = "600000000000000001";
-const JAN = { id: "200000000000000001", name: "Jan" }, MAX = { id: "200000000000000002", name: "Max" };
-const data = { guildId: GUILD, channelId: CHANNEL, season: 4, matchday: 1, players: [JAN, MAX], link: "https://example.org/replay",
-  reporter: JAN, result: { winnerId: JAN.id, loserId: MAX.id, score: "2-0" } };
+const GUILD = "300000000000000001",
+  CHANNEL = "400000000000000001",
+  MESSAGE = "500000000000000001",
+  BOT = "600000000000000001";
+const JAN = { id: "200000000000000001", name: "Jan" },
+  MAX = { id: "200000000000000002", name: "Max" };
+const data = {
+  guildId: GUILD,
+  channelId: CHANNEL,
+  season: 4,
+  matchday: 1,
+  players: [JAN, MAX],
+  link: "https://example.org/replay",
+  reporter: JAN,
+  result: { winnerId: JAN.id, loserId: MAX.id, score: "2-0" },
+};
 
 function setup(t) {
   const directory = fs.mkdtempSync(join(tmpdir(), "liga-sqlite-test-"));
   const handles = [];
   t.after(() => {
-    for (const db of handles) try { db.close(); } catch {}
+    for (const db of handles)
+      try {
+        db.close();
+      } catch {
+        /* Tests may already have closed this handle. */
+      }
     assert.equal(dirname(directory), tmpdir());
     fs.rmSync(directory, { recursive: true, force: true });
   });
   const filePath = join(directory, DATABASE_NAME);
-  const open = (path = filePath, options) => { const db = new LigaDatabase(path, options); handles.push(db); return db; };
+  const open = (path = filePath, options) => {
+    const db = new LigaDatabase(path, options);
+    handles.push(db);
+    return db;
+  };
   return { directory, filePath, open };
 }
 
@@ -38,7 +59,9 @@ test("SQLite imports validated JSON once, preserves identities and pending chang
   const record = original.add({ ...data, reporter: undefined, result: undefined });
   original.setPublication(record.id, { status: "sending" });
   original.setPublication(record.id, { status: "published", messageId: MESSAGE });
-  original.beginChange(record.id, GUILD, revisionOf(original.get(record.id, GUILD)), { kind: "delete" });
+  original.beginChange(record.id, GUILD, revisionOf(original.get(record.id, GUILD)), {
+    kind: "delete",
+  });
   const before = fs.readFileSync(original.filePath, "utf8");
   const db = f.open();
   const store = new MatchStore(f.filePath, db);
@@ -71,26 +94,71 @@ test("published reports, edits and deletions produce durable before/after events
   const f = setup(t);
   const db = f.open();
   const store = new MatchStore(f.filePath, db);
-  const post = { author: { id: BOT }, async edit(payload) { this.payload = payload; }, async delete() {} };
-  const channel = { id: CHANNEL, guildId: GUILD, async send(payload) { this.payload = payload; return { id: MESSAGE }; },
-    messages: { async fetch() { return post; } } };
+  const post = {
+    author: { id: BOT },
+    async edit(payload) {
+      this.payload = payload;
+    },
+    async delete() {},
+  };
+  const channel = {
+    id: CHANNEL,
+    guildId: GUILD,
+    async send(payload) {
+      this.payload = payload;
+      return { id: MESSAGE };
+    },
+    messages: {
+      async fetch() {
+        return post;
+      },
+    },
+  };
   const publisher = new ReportPublisher(store);
   await publisher.publish(data, channel, createResultMessage("Jan", "Max", "2-0", data.link, data));
   const record = store.list(GUILD)[0];
   assert.equal(channel.payload.components[0].toJSON().components.length, 2);
   const target = { ...data, reporter: undefined, result: undefined, matchday: 2 };
-  delete target.reporter; delete target.result;
+  delete target.reporter;
+  delete target.result;
   const result = { winnerId: MAX.id, loserId: JAN.id, score: "1-0" };
-  await new ReportManager(store).apply(record.id, GUILD, channel, BOT,
-    { kind: "edit", target, result, embed: createResultMessage("Max", "Jan", "1-0", data.link, target).embeds[0].toJSON() },
-    revisionOf(store.get(record.id, GUILD)), MAX);
+  await new ReportManager(store).apply(
+    record.id,
+    GUILD,
+    channel,
+    BOT,
+    {
+      kind: "edit",
+      target,
+      result,
+      embed: createResultMessage("Max", "Jan", "1-0", data.link, target).embeds[0].toJSON(),
+    },
+    revisionOf(store.get(record.id, GUILD)),
+    MAX,
+  );
   assert.equal(store.get(record.id, GUILD).reporter.id, JAN.id);
-  assert.equal(post.payload.components[0].toJSON().components[0].custom_id, `report:edit:${record.id}`);
-  channel.messages.fetch = async () => { throw Object.assign(new Error("Already deleted"), { code: 10008 }); };
-  await new ReportManager(store).apply(record.id, GUILD, channel, BOT, { kind: "delete" }, revisionOf(store.get(record.id, GUILD)), MAX);
+  assert.equal(
+    post.payload.components[0].toJSON().components[0].custom_id,
+    `report:edit:${record.id}`,
+  );
+  channel.messages.fetch = async () => {
+    throw Object.assign(new Error("Already deleted"), { code: 10008 });
+  };
+  await new ReportManager(store).apply(
+    record.id,
+    GUILD,
+    channel,
+    BOT,
+    { kind: "delete" },
+    revisionOf(store.get(record.id, GUILD)),
+    MAX,
+  );
   assert.deepEqual(store.list(GUILD), []);
   const events = db.auditEvents(GUILD, 4);
-  assert.deepEqual(events.map((event) => event.action), ["created", "edited", "deleted"]);
+  assert.deepEqual(
+    events.map((event) => event.action),
+    ["created", "edited", "deleted"],
+  );
   assert.equal(events[1].before.matchday, 1);
   assert.equal(events[1].after.matchday, 2);
   assert.equal(events[1].after.result.winnerId, MAX.id);
@@ -109,30 +177,66 @@ test("an audit write failure rolls back the report change and retries the same p
   store.setPublication(record.id, { status: "sending" });
   store.setPublication(record.id, { status: "published", messageId: MESSAGE });
   let deletes = 0;
-  const channel = { id: CHANNEL, guildId: GUILD, messages: { async fetch() {
-    if (deletes) throw Object.assign(new Error("Unknown Message"), { code: 10008 });
-    return { author: { id: BOT }, async delete() { deletes++; } };
-  } } };
+  const channel = {
+    id: CHANNEL,
+    guildId: GUILD,
+    messages: {
+      async fetch() {
+        if (deletes) throw Object.assign(new Error("Unknown Message"), { code: 10008 });
+        return {
+          author: { id: BOT },
+          async delete() {
+            deletes++;
+          },
+        };
+      },
+    },
+  };
   const write = db.writeEvent.bind(db);
   const diskError = Object.assign(new Error("private audit request details"), { code: "ENOSPC" });
-  db.writeEvent = () => { throw diskError; };
-  await assert.rejects(new ReportManager(store).apply(record.id, GUILD, channel, BOT, { kind: "delete" }, revisionOf(store.get(record.id, GUILD)), MAX), (error) => {
-    assert.match(error.message, /Archiv konnte nicht aktualisiert/);
-    assert.equal(error.cause.cause, diskError);
-    assert.equal(error.context.reportId, record.id);
-    assert.equal(error.context.channelId, CHANNEL);
-    assert.ok(!error.message.includes("private audit request details"));
-    return true;
-  });
+  db.writeEvent = () => {
+    throw diskError;
+  };
+  await assert.rejects(
+    new ReportManager(store).apply(
+      record.id,
+      GUILD,
+      channel,
+      BOT,
+      { kind: "delete" },
+      revisionOf(store.get(record.id, GUILD)),
+      MAX,
+    ),
+    (error) => {
+      assert.match(error.message, /Archiv konnte nicht aktualisiert/);
+      assert.equal(error.cause.cause, diskError);
+      assert.equal(error.context.reportId, record.id);
+      assert.equal(error.context.channelId, CHANNEL);
+      assert.ok(!error.message.includes("private audit request details"));
+      return true;
+    },
+  );
   assert.equal(db.auditEvents(GUILD, 4).length, 1);
   assert.equal(db.listMatches(GUILD)[0].change.kind, "delete");
   db.writeEvent = write;
   db.close();
   const restarted = f.open();
   const restartedStore = new MatchStore(f.filePath, restarted);
-  await new ReportManager(restartedStore).apply(record.id, GUILD, channel, BOT, undefined, undefined, JAN);
+  await new ReportManager(restartedStore).apply(
+    record.id,
+    GUILD,
+    channel,
+    BOT,
+    undefined,
+    undefined,
+    JAN,
+  );
   assert.equal(restarted.auditEvents(GUILD, 4).length, 2);
-  assert.equal(restarted.auditEvents(GUILD, 4)[1].actor.id, MAX.id, "The original requester remains in the durable journal");
+  assert.equal(
+    restarted.auditEvents(GUILD, 4)[1].actor.id,
+    MAX.id,
+    "The original requester remains in the durable journal",
+  );
   assert.deepEqual(restartedStore.list(GUILD), []);
   assert.equal(deletes, 1);
 });
@@ -149,13 +253,21 @@ test("SQLite backups are complete snapshots with logs, rotate safely and restore
   const backups = new SqliteBackups(f.filePath, { now: () => date, keepCount: 2 });
   assert.equal(backups.create().created, true);
   assert.equal(backups.create().created, false);
-  for (let day = 23; day <= 24; day++) { date = new Date(`2026-10-${day}T12:00:00Z`); backups.create(); }
+  for (let day = 23; day <= 24; day++) {
+    date = new Date(`2026-10-${day}T12:00:00Z`);
+    backups.create();
+  }
   const names = fs.readdirSync(backups.directory);
   assert.equal(names.length, 2);
-  const restored = f.open(join(backups.directory, names.sort().at(-1), DATABASE_NAME), { readOnly: true });
+  const restored = f.open(join(backups.directory, names.sort().at(-1), DATABASE_NAME), {
+    readOnly: true,
+  });
   assert.equal(restored.auditEvents(GUILD, 4).length, 1);
   assert.equal(restored.listMatches(GUILD)[0].reporter.id, JAN.id);
-  assert.equal(new LeagueSettingsStore(restored.filePath, undefined, restored).get(GUILD).season, 4);
+  assert.equal(
+    new LeagueSettingsStore(restored.filePath, undefined, restored).get(GUILD).season,
+    4,
+  );
   const expected = restored.auditEvents(GUILD, 4);
   assert.deepEqual(restored.auditEvents("300000000000000002", 4), []);
   assert.deepEqual(restored.auditEvents(GUILD, 5), []);
@@ -171,7 +283,9 @@ test("the backup CLI selects SQLite without a Discord login and a corrupt source
   store.setPublication(record.id, { status: "sending" });
   store.setPublication(record.id, { status: "published", messageId: MESSAGE });
   const result = spawnSync(process.execPath, [join(__dirname, "backup.js")], {
-    cwd: f.directory, env: { ...process.env, DATA_DIR: f.directory, RAILWAY_ENVIRONMENT_ID: "", DISCORD_TOKEN: "" }, encoding: "utf8",
+    cwd: f.directory,
+    env: { ...process.env, DATA_DIR: f.directory, RAILWAY_ENVIRONMENT_ID: "", DISCORD_TOKEN: "" },
+    encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Datensicherung erstellt/);

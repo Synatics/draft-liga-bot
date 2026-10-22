@@ -9,7 +9,10 @@ class LeagueSettingsError extends Error {}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const berlinDate = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
+  timeZone: "Europe/Berlin",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
 });
 
 function calendarDate(year, month, day) {
@@ -27,11 +30,18 @@ function normalizeStartDate(value) {
   }
   const [year, month, day] = (iso ? iso.slice(1) : [german[3], german[2], german[1]]).map(Number);
   const date = calendarDate(year, month, day);
-  if (year < 1 || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+  if (
+    year < 1 ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
     throw new LeagueSettingsError("Bitte gib ein gültiges Startdatum an.");
   }
   if (date.getUTCDay() !== 1) {
-    throw new LeagueSettingsError("Das Startdatum muss ein Montag sein, an dem Spieltag 1 beginnt.");
+    throw new LeagueSettingsError(
+      "Das Startdatum muss ein Montag sein, an dem Spieltag 1 beginnt.",
+    );
   }
   return date.toISOString().slice(0, 10);
 }
@@ -42,8 +52,12 @@ function currentMatchday(settings, now = new Date()) {
   // Keep previously saved manual settings readable until a start date is configured once.
   if (settings.startDate === undefined) return settings.currentMatchday;
   const start = normalizeStartDate(settings.startDate).split("-").map(Number);
-  const parts = Object.fromEntries(berlinDate.formatToParts(now)
-    .filter((part) => part.type !== "literal").map((part) => [part.type, Number(part.value)]));
+  const parts = Object.fromEntries(
+    berlinDate
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
   // Compare calendar dates, not elapsed hours: DST weeks can have 167 or 169 hours.
   const days = (calendarDate(parts.year, parts.month, parts.day) - calendarDate(...start)) / DAY_MS;
   return Math.min(settings.matchdays, Math.max(1, Math.floor(days / 7) + 1));
@@ -56,7 +70,8 @@ function checkInteger(value, label, maximum) {
 }
 
 function validateSettings(settings) {
-  if (!settings || typeof settings !== "object") throw new LeagueSettingsError("Ungültige Liga-Einstellungen.");
+  if (!settings || typeof settings !== "object")
+    throw new LeagueSettingsError("Ungültige Liga-Einstellungen.");
   checkInteger(settings.season, "Die Season", 9999);
   checkInteger(settings.matchdays, "Die Anzahl der Spieltage", 25);
   if (settings.startDate !== undefined) normalizeStartDate(settings.startDate);
@@ -68,7 +83,13 @@ function validateSettings(settings) {
 /** @param {string} text @returns {{version: 1, guilds: Record<string, SeasonSettings>}} */
 function parseSettingsDocument(text) {
   const data = JSON.parse(text);
-  if (!data || data.version !== 1 || !data.guilds || typeof data.guilds !== "object" || Array.isArray(data.guilds)) {
+  if (
+    !data ||
+    data.version !== 1 ||
+    !data.guilds ||
+    typeof data.guilds !== "object" ||
+    Array.isArray(data.guilds)
+  ) {
     throw new Error("Ungültiges Dateiformat der Liga-Einstellungen");
   }
   for (const settings of Object.values(data.guilds)) validateSettings(settings);
@@ -78,14 +99,16 @@ function parseSettingsDocument(text) {
 function settingsFilePath(env = process.env) {
   if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
     throw new LeagueSettingsError(
-      "Bitte dem Bot-Service in Railway einmalig ein Volume (z.B. /data) zuordnen, damit Liga-Einstellungen und Replays erhalten bleiben."
+      "Bitte dem Bot-Service in Railway einmalig ein Volume (z.B. /data) zuordnen, damit Liga-Einstellungen und Replays erhalten bleiben.",
     );
   }
   const dataDir = resolve(env.DATA_DIR || env.RAILWAY_VOLUME_MOUNT_PATH || join(__dirname, "data"));
   if (env.RAILWAY_ENVIRONMENT_ID) {
     const withinVolume = relative(resolve(env.RAILWAY_VOLUME_MOUNT_PATH), dataDir);
     if (withinVolume === ".." || withinVolume.startsWith(`..${sep}`) || isAbsolute(withinVolume)) {
-      throw new LeagueSettingsError("DATA_DIR muss auf Railway innerhalb des zugeordneten Volumes liegen.");
+      throw new LeagueSettingsError(
+        "DATA_DIR muss auf Railway innerhalb des zugeordneten Volumes liegen.",
+      );
     }
   }
   return join(dataDir, "league-settings.json");
@@ -104,12 +127,18 @@ class LeagueSettingsStore {
     /** @type {Record<string, SeasonSettings>} */
     this.guilds = {};
     try {
-      const data = parseSettingsDocument(storage ? storage.readSettings() : readFileSync(filePath, "utf8"));
+      const data = parseSettingsDocument(
+        storage ? storage.readSettings() : readFileSync(filePath, "utf8"),
+      );
       this.guilds = data.guilds;
     } catch (error) {
       if (error.code !== "ENOENT") {
-        throw causedError(LeagueSettingsError, "Die gespeicherten Liga-Einstellungen konnten nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
-          error, { operation: "settings.read", file: storage ? "liga.sqlite" : "league-settings.json" });
+        throw causedError(
+          LeagueSettingsError,
+          "Die gespeicherten Liga-Einstellungen konnten nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
+          error,
+          { operation: "settings.read", file: storage ? "liga.sqlite" : "league-settings.json" },
+        );
       }
     }
   }
@@ -119,12 +148,14 @@ class LeagueSettingsStore {
     const settings = this.guilds[guildId];
     if (!settings) {
       throw new LeagueSettingsError(
-        "Die Season ist noch nicht eingerichtet. Bitte mit /liga season die Nummer, Anzahl der Spieltage und das Startdatum einstellen."
+        "Die Season ist noch nicht eingerichtet. Bitte mit /liga season die Nummer, Anzahl der Spieltage und das Startdatum einstellen.",
       );
     }
     return {
       ...settings,
-      ...(settings.startDate !== undefined ? { startDate: normalizeStartDate(settings.startDate) } : {}),
+      ...(settings.startDate !== undefined
+        ? { startDate: normalizeStartDate(settings.startDate) }
+        : {}),
       currentMatchday: currentMatchday(settings, this.now()),
     };
   }
@@ -139,7 +170,12 @@ class LeagueSettingsStore {
   save(guildId, settings) {
     validateSettings(settings);
     const guilds = { ...this.guilds, [guildId]: { ...settings } };
-    const context = { operation: "settings.write", file: this.storage ? "liga.sqlite" : "league-settings.json", guildId, season: settings.season };
+    const context = {
+      operation: "settings.write",
+      file: this.storage ? "liga.sqlite" : "league-settings.json",
+      guildId,
+      season: settings.season,
+    };
     try {
       if (this.storage) this.storage.saveSettings(guilds);
       else writeJsonAtomic(this.filePath, { version: 1, guilds });
@@ -156,7 +192,11 @@ class LeagueSettingsStore {
 }
 
 module.exports = {
-  LeagueSettingsError, LeagueSettingsStore, settingsFilePath, validateSettings,
-  normalizeStartDate, currentMatchday,
+  LeagueSettingsError,
+  LeagueSettingsStore,
+  settingsFilePath,
+  validateSettings,
+  normalizeStartDate,
+  currentMatchday,
   parseSettingsDocument,
 };

@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node index.js",
     "backup": "node backup.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check && npm test"
   },
   "keywords": [],
   "author": "",
@@ -18,5 +22,11 @@
   "dependencies": {
     "discord.js": "^14.27.0",
     "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "prettier": "3.9.10"
   }
 }

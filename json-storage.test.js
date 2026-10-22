@@ -41,7 +41,10 @@ for (const operation of ["writeFileSync", "renameSync"]) {
       }
       throw failure;
     });
-    assert.throws(() => writeJsonAtomic(path, { value: "next" }), (error) => error === failure);
+    assert.throws(
+      () => writeJsonAtomic(path, { value: "next" }),
+      (error) => error === failure,
+    );
     if (descriptor !== undefined) assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
     assert.equal(fs.readFileSync(path, "utf8"), original);
     assert.deepEqual(fs.readdirSync(dirname(path)), ["document.json"]);
@@ -57,7 +60,11 @@ test("a temporary filename collision never removes or replaces a file belonging 
   t.mock.method(fs, "openSync", (temporaryPath, flags) => {
     // Another writer claimed this name before our exclusive open.
     const descriptor = open(temporaryPath, "wx");
-    try { fs.writeFileSync(descriptor, "belongs to another writer"); } finally { fs.closeSync(descriptor); }
+    try {
+      fs.writeFileSync(descriptor, "belongs to another writer");
+    } finally {
+      fs.closeSync(descriptor);
+    }
     existing = temporaryPath;
     return open(temporaryPath, flags);
   });
@@ -73,14 +80,21 @@ test("a cleanup failure preserves both system errors and the previous document",
   const original = fs.readFileSync(path, "utf8");
   const failure = Object.assign(new Error("write failed"), { code: "ENOSPC" });
   const cleanupFailure = Object.assign(new Error("cleanup failed"), { code: "EACCES" });
-  t.mock.method(fs, "writeFileSync", () => { throw failure; });
-  t.mock.method(fs, "unlinkSync", () => { throw cleanupFailure; });
-  assert.throws(() => writeJsonAtomic(path, { value: "next" }), (error) => {
-    assert.ok(error instanceof AggregateError);
-    assert.equal(error.cause, failure);
-    assert.deepEqual(error.errors, [failure, cleanupFailure]);
-    return true;
+  t.mock.method(fs, "writeFileSync", () => {
+    throw failure;
   });
+  t.mock.method(fs, "unlinkSync", () => {
+    throw cleanupFailure;
+  });
+  assert.throws(
+    () => writeJsonAtomic(path, { value: "next" }),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, failure);
+      assert.deepEqual(error.errors, [failure, cleanupFailure]);
+      return true;
+    },
+  );
   assert.equal(fs.readFileSync(path, "utf8"), original);
 });
 
@@ -98,20 +112,42 @@ test("invalid JSON input fails before a file is created or the previous document
 test("both JSON stores retain their cache, disk state and diagnostic cause on rename failure, then allow retry", (t) => {
   const { directory } = fixture(t);
   const guild = "300000000000000001";
-  const match = { guildId: guild, channelId: "400000000000000001", season: 4, matchday: 1,
-    players: [{ id: "200000000000000001", name: "Jan" }, { id: "200000000000000002", name: "Max" }],
-    link: "https://example.org/replay" };
-  const matchPath = join(directory, "matches.json"), settingsPath = join(directory, "league-settings.json");
+  const match = {
+    guildId: guild,
+    channelId: "400000000000000001",
+    season: 4,
+    matchday: 1,
+    players: [
+      { id: "200000000000000001", name: "Jan" },
+      { id: "200000000000000002", name: "Max" },
+    ],
+    link: "https://example.org/replay",
+  };
+  const matchPath = join(directory, "matches.json"),
+    settingsPath = join(directory, "league-settings.json");
   const matches = new MatchStore(matchPath);
   const settings = new LeagueSettingsStore(settingsPath);
   matches.add(match);
   settings.setSeason(guild, 4, 10, "19.10.2026");
-  const originalMatches = fs.readFileSync(matchPath, "utf8"), originalSettings = fs.readFileSync(settingsPath, "utf8");
+  const originalMatches = fs.readFileSync(matchPath, "utf8"),
+    originalSettings = fs.readFileSync(settingsPath, "utf8");
   const failure = Object.assign(new Error("destination locked"), { code: "EPERM" });
-  t.mock.method(fs, "renameSync", () => { throw failure; });
+  t.mock.method(fs, "renameSync", () => {
+    throw failure;
+  });
   for (const [write, ErrorType, operation, file] of [
-    [() => matches.add({ ...match, matchday: 2 }), MatchStoreError, "archive.write", "matches.json"],
-    [() => settings.setSeason(guild, 5, 10, "26.10.2026"), LeagueSettingsError, "settings.write", "league-settings.json"],
+    [
+      () => matches.add({ ...match, matchday: 2 }),
+      MatchStoreError,
+      "archive.write",
+      "matches.json",
+    ],
+    [
+      () => settings.setSeason(guild, 5, 10, "26.10.2026"),
+      LeagueSettingsError,
+      "settings.write",
+      "league-settings.json",
+    ],
   ]) {
     assert.throws(write, (error) => {
       assert.ok(error instanceof ErrorType);

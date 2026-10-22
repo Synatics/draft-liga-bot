@@ -3,7 +3,12 @@ const { mkdtempSync, readFileSync, writeFileSync, rmSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 const { tmpdir } = require("node:os");
 const { test } = require("node:test");
-const { LeagueSettingsStore, settingsFilePath, normalizeStartDate, currentMatchday } = require("./league-settings");
+const {
+  LeagueSettingsStore,
+  settingsFilePath,
+  normalizeStartDate,
+  currentMatchday,
+} = require("./league-settings");
 
 const fixedNow = () => new Date("2026-10-18T12:00:00Z");
 
@@ -23,8 +28,18 @@ test("season and matchday survive a restart and remain separate for each guild",
   store.setSeason("guild-a", 3, 9, "31.08.2026");
   store.setSeason("guild-b", 8, 18, "12.10.2026");
   const restarted = new LeagueSettingsStore(filePath, fixedNow);
-  assert.deepEqual(restarted.get("guild-a"), { season: 3, matchdays: 9, startDate: "2026-08-31", currentMatchday: 7 });
-  assert.deepEqual(restarted.get("guild-b"), { season: 8, matchdays: 18, startDate: "2026-10-12", currentMatchday: 1 });
+  assert.deepEqual(restarted.get("guild-a"), {
+    season: 3,
+    matchdays: 9,
+    startDate: "2026-08-31",
+    currentMatchday: 7,
+  });
+  assert.deepEqual(restarted.get("guild-b"), {
+    season: 8,
+    matchdays: 18,
+    startDate: "2026-10-12",
+    currentMatchday: 1,
+  });
   const returned = restarted.get("guild-a");
   returned.season = 99;
   assert.equal(restarted.get("guild-a").season, 3);
@@ -36,7 +51,10 @@ test("the current matchday follows the configured start date and stays within th
   assert.equal(store.setSeason("guild", 3, 18, "31.08.2026").currentMatchday, 7);
   assert.equal(store.setSeason("guild", 3, 5, "31.08.2026").currentMatchday, 5);
   assert.deepEqual(store.setSeason("guild", 4, 9, "19.10.2026"), {
-    season: 4, matchdays: 9, startDate: "2026-10-19", currentMatchday: 1,
+    season: 4,
+    matchdays: 9,
+    startDate: "2026-10-19",
+    currentMatchday: 1,
   });
 });
 
@@ -67,8 +85,14 @@ test("a write failure cannot change the active or previously saved season", (t) 
 
 test("damaged settings are reported instead of silently resetting the season", (t) => {
   const { filePath } = temporaryStore(t);
-  for (const content of ["{invalid", JSON.stringify({ version: 2, guilds: {} }),
-    JSON.stringify({ version: 1, guilds: { guild: { season: 3, matchdays: 9, currentMatchday: 10 } } })]) {
+  for (const content of [
+    "{invalid",
+    JSON.stringify({ version: 2, guilds: {} }),
+    JSON.stringify({
+      version: 1,
+      guilds: { guild: { season: 3, matchdays: 9, currentMatchday: 10 } },
+    }),
+  ]) {
     writeFileSync(filePath, content);
     assert.throws(() => new LeagueSettingsStore(filePath), /nicht gelesen/);
     assert.equal(readFileSync(filePath, "utf8"), content);
@@ -77,12 +101,28 @@ test("damaged settings are reported instead of silently resetting the season", (
 
 test("Railway settings require a volume and are stored inside its mount path", () => {
   const volume = join(tmpdir(), "liga-volume");
-  assert.equal(settingsFilePath({ RAILWAY_VOLUME_MOUNT_PATH: volume }), join(volume, "league-settings.json"));
-  assert.equal(settingsFilePath({ RAILWAY_ENVIRONMENT_ID: "test", RAILWAY_VOLUME_MOUNT_PATH: volume,
-    DATA_DIR: join(volume, "bot") }), join(volume, "bot", "league-settings.json"));
+  assert.equal(
+    settingsFilePath({ RAILWAY_VOLUME_MOUNT_PATH: volume }),
+    join(volume, "league-settings.json"),
+  );
+  assert.equal(
+    settingsFilePath({
+      RAILWAY_ENVIRONMENT_ID: "test",
+      RAILWAY_VOLUME_MOUNT_PATH: volume,
+      DATA_DIR: join(volume, "bot"),
+    }),
+    join(volume, "bot", "league-settings.json"),
+  );
   assert.throws(() => settingsFilePath({ RAILWAY_ENVIRONMENT_ID: "test" }), /Volume/);
-  assert.throws(() => settingsFilePath({ RAILWAY_ENVIRONMENT_ID: "test", RAILWAY_VOLUME_MOUNT_PATH: volume,
-    DATA_DIR: tmpdir() }), /innerhalb/);
+  assert.throws(
+    () =>
+      settingsFilePath({
+        RAILWAY_ENVIRONMENT_ID: "test",
+        RAILWAY_VOLUME_MOUNT_PATH: volume,
+        DATA_DIR: tmpdir(),
+      }),
+    /innerhalb/,
+  );
   assert.equal(settingsFilePath({ DATA_DIR: volume }), join(volume, "league-settings.json"));
 });
 
@@ -90,7 +130,15 @@ test("start dates accept German or ISO notation and must be a real calendar Mond
   assert.equal(normalizeStartDate("19.10.2026"), "2026-10-19");
   assert.equal(normalizeStartDate("2026-10-19"), "2026-10-19");
   assert.equal(normalizeStartDate("2024-02-26"), "2024-02-26");
-  for (const invalid of ["31.04.2026", "2026-02-29", "2026-00-19", "2026-10-00", "0000-01-01", "26-10-19", ""]) {
+  for (const invalid of [
+    "31.04.2026",
+    "2026-02-29",
+    "2026-00-19",
+    "2026-10-00",
+    "0000-01-01",
+    "26-10-19",
+    "",
+  ]) {
     assert.throws(() => normalizeStartDate(invalid), /Startdatum/);
   }
   assert.throws(() => normalizeStartDate("18.10.2026"), /Montag/);
@@ -138,9 +186,15 @@ test("weeks advance without disk writes and are immediately correct after severa
 
 test("previous manual settings stay readable and can be switched to a weekly schedule once", (t) => {
   const { filePath } = temporaryStore(t);
-  writeFileSync(filePath, JSON.stringify({ version: 1, guilds: {
-    guild: { season: 3, matchdays: 9, currentMatchday: 7 },
-  } }));
+  writeFileSync(
+    filePath,
+    JSON.stringify({
+      version: 1,
+      guilds: {
+        guild: { season: 3, matchdays: 9, currentMatchday: 7 },
+      },
+    }),
+  );
   const store = new LeagueSettingsStore(filePath, fixedNow);
   assert.equal(store.get("guild").currentMatchday, 7);
   assert.equal(store.setSeason("guild", 3, 9, "31.08.2026").currentMatchday, 7);
