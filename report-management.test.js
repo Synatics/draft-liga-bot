@@ -915,7 +915,7 @@ test("the slash fallback finds a deleted post by season and player and removes i
   const slash = managementCommands.find((entry) => entry.name === "report-entfernen");
   assert.deepEqual(
     slash.options.map((option) => option.name),
-    ["season", "name", "spieltag"],
+    ["season", "name", "spieltag", "runde"],
   );
   assert.equal(slash.options[1].autocomplete, true);
 });

@@ -20,6 +20,19 @@ const { ReportManagementError } = require("./report-manager");
 const { playerChoices, resolvePlayer } = require("./search-commands");
 const { isParticipant, isLeagueManager, currentMember, actorOf } = require("./permissions");
 const { causedError } = require("./diagnostics");
+const {
+  playableRounds,
+  roundOf,
+  roundLabel,
+  roundFields,
+  matchRoundLabel,
+  seasonRoundLabel,
+  roundOrder,
+  selectedRound,
+  roundChoices,
+  resolveRoundFilter,
+  planToken,
+} = require("./season-rounds");
 
 const managementCommands = [
   {
@@ -51,6 +64,14 @@ const managementCommands = [
         min_value: 1,
         max_value: 25,
       },
+      {
+        name: "runde",
+        description:
+          "Optional: eine Ligaspiel- oder Playoff-Runde auswählen (alternativ zu spieltag)",
+        type: ApplicationCommandOptionType.String,
+        autocomplete: true,
+        max_length: 100,
+      },
     ],
   },
 ];
@@ -58,14 +79,36 @@ const privateReply = { flags: [MessageFlags.Ephemeral], allowedMentions: { parse
 const customId = (action, record, userId) =>
   `manage:${action}:${record.id}:${revisionOf(record)}:${userId}`;
 
-function maximumMatchday(record, settingsStore) {
+function correctionRounds(record, settingsStore) {
   let settings;
   try {
-    settings = settingsStore?.get(record.guildId);
+    settings = settingsStore?.getSeason
+      ? settingsStore.getSeason(record.guildId, record.season)
+      : settingsStore?.get(record.guildId);
   } catch {
     /* Historical corrections do not require a configured season. */
   }
-  return settings?.season === record.season ? settings.matchdays : 25;
+  const configured = settings?.season === record.season;
+  const planned = Boolean((configured && settings.rounds) || record.round);
+  const rounds = configured
+    ? playableRounds(settings)
+    : record.round
+      ? [structuredClone(record.round)]
+      : playableRounds({ matchdays: 25 });
+  // An existing report remains correctable even if its round was later removed from the plan.
+  if (record.round) {
+    const index = rounds.findIndex((round) => round.id === record.round.id);
+    if (index >= 0) rounds[index] = structuredClone(record.round);
+    else {
+      if (rounds.length === 25) rounds.pop();
+      rounds.push(structuredClone(record.round));
+    }
+  }
+  return {
+    planned,
+    rounds,
+    token: planned ? planToken({ season: record.season, rounds }) : undefined,
+  };
 }
 
 function canManage(
@@ -179,6 +222,7 @@ function correctionOptions(guild, record, roleId) {
 }
 
 function correctionModal(interaction, record, roleId, settingsStore) {
+  const { planned, rounds, token } = correctionRounds(record, settingsStore);
   const message = interaction.message;
   const fields = message?.embeds?.[0]?.fields || [];
   const options = correctionOptions(interaction.guild, record, roleId);
@@ -210,21 +254,21 @@ function correctionModal(interaction, record, roleId, settingsStore) {
     .setPlaceholder("z.B. 2-0");
   if (score && score.length <= 100) scoreInput.setValue(score);
   return new ModalBuilder()
-    .setCustomId(customId("edit", record, interaction.user.id))
+    .setCustomId(`${customId("edit", record, interaction.user.id)}${token ? `:${token}` : ""}`)
     .setTitle(`Report korrigieren · Season ${record.season}`)
     .addLabelComponents(
-      new LabelBuilder().setLabel("Spieltag").setStringSelectMenuComponent(
+      new LabelBuilder().setLabel("Runde").setStringSelectMenuComponent(
         new StringSelectMenuBuilder()
-          .setCustomId("matchday")
-          .setPlaceholder("Spieltag auswählen")
+          .setCustomId(planned ? "round" : "matchday")
+          .setPlaceholder("Runde auswählen")
           .setMinValues(1)
           .setMaxValues(1)
           .setRequired(true)
           .addOptions(
-            Array.from({ length: maximumMatchday(record, settingsStore) }, (_, index) => ({
-              label: `Spieltag ${index + 1}`,
-              value: String(index + 1),
-              default: index + 1 === record.matchday,
+            rounds.map((round) => ({
+              label: roundLabel(round),
+              value: planned ? round.id : String(round.matchday),
+              default: round.id === roundOf(record).id,
             })),
           ),
       ),
@@ -250,7 +294,7 @@ function deletionPrompt(interaction, record) {
     .join(" vs. ");
   return {
     ...privateReply,
-    content: `Report **Season ${record.season} · Spieltag ${record.matchday} · ${names}** wirklich löschen?\nReplay: <${record.link}>\nKanal: <#${record.channelId}>\n\nDer Ergebnispost und sein Suchtreffer werden entfernt. Fehlt der Post bereits, wird nur der Archiv-Eintrag entfernt.`,
+    content: `Report **${seasonRoundLabel(record)} · ${names}** wirklich löschen?\nReplay: <${record.link}>\nKanal: <#${record.channelId}>\n\nDer Ergebnispost und sein Suchtreffer werden entfernt. Fehlt der Post bereits, wird nur der Archiv-Eintrag entfernt.`,
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -295,6 +339,15 @@ async function removableMatches(interaction, store, managerRoleId) {
 async function handleRemovalAutocomplete(interaction, store, managerRoleId) {
   const season = interaction.options.getInteger("season");
   const focused = interaction.options.getFocused(true);
+  if (focused.name === "runde") {
+    const matches = season
+      ? (await removableMatches(interaction, store, managerRoleId)).filter(
+          (match) => match.season === season,
+        )
+      : [];
+    await interaction.respond(roundChoices(matches, focused.value));
+    return;
+  }
   await interaction.respond(
     focused.name === "name" && season
       ? playerChoices(
@@ -312,11 +365,12 @@ const matchingRemovals = (matches, query) =>
       (match) =>
         match.season === query.season &&
         (!query.matchday || match.matchday === query.matchday) &&
+        (!query.roundId || roundOf(match).id === query.roundId) &&
         match.players.some((player) => player.id === query.playerId),
     )
     .sort(
       (a, b) =>
-        a.matchday - b.matchday ||
+        roundOrder(a) - roundOrder(b) ||
         a.channelId.localeCompare(b.channelId) ||
         a.id.localeCompare(b.id),
     );
@@ -325,14 +379,14 @@ function removalPicker(interaction, matches, query, requestedPage = 0) {
   if (!matches.length)
     return {
       content:
-        "Keine passenden Reports gefunden, die du entfernen darfst. Prüfe Season, Spieler, Spieltag und deinen Zugriff auf den Ergebniskanal.",
+        "Keine passenden Reports gefunden, die du entfernen darfst. Prüfe Season, Spieler, Runde und deinen Zugriff auf den Ergebniskanal.",
       components: [],
       allowedMentions: { parse: [] },
     };
   const pages = Math.ceil(matches.length / 25);
   const page = Math.min(requestedPage, pages - 1);
   const pageId = (number) =>
-    `manage:page:${interaction.user.id}:${query.season}:${query.playerId}:${query.matchday || 0}:${number}`;
+    `manage:page:${interaction.user.id}:${query.season}:${query.playerId}:${query.matchday || 0}:${number}${query.roundId ? `:${query.roundId}` : ""}`;
   return {
     content: `**Report entfernen · Season ${query.season}**\n${matches.length} Treffer · Seite ${page + 1} von ${pages}. Bitte genau einen Report auswählen. Gelöscht wird erst nach deiner Bestätigung.`,
     allowedMentions: { parse: [] },
@@ -346,7 +400,7 @@ function removalPicker(interaction, matches, query, requestedPage = 0) {
           .addOptions(
             matches.slice(page * 25, (page + 1) * 25).map((match) => ({
               label:
-                `Spieltag ${match.matchday} · ${match.players.map((player) => player.name.replace(/[\r\n]/g, " ")).join(" vs. ")}`.slice(
+                `${matchRoundLabel(match)} · ${match.players.map((player) => player.name.replace(/[\r\n]/g, " ")).join(" vs. ")}`.slice(
                   0,
                   100,
                 ),
@@ -394,8 +448,14 @@ async function openRemoval(interaction, store, managerRoleId) {
     );
   }
   const matches = await removableMatches(interaction, store, managerRoleId);
+  const roundInput = interaction.options.get?.("runde")?.value;
+  const roundId = roundInput == null ? undefined : resolveRoundFilter(roundInput, matches);
+  if (roundInput != null && (!roundId || matchday != null))
+    throw new ReportManagementError(
+      "Bitte eine gültige Runde auswählen und entweder runde oder spieltag verwenden.",
+    );
   const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
-  const query = { season, matchday, playerId: player?.id };
+  const query = { season, matchday, roundId, playerId: player?.id };
   const found = matchingRemovals(matches, query);
   const { flags, ...prompt } =
     found.length === 1
@@ -406,7 +466,7 @@ async function openRemoval(interaction, store, managerRoleId) {
 
 async function handleRemovalComponent(interaction, store, managerRoleId) {
   const parsed =
-    /^manage:(pick|page|stop):(\d{17,20})(?::([1-9]\d{0,3}):(\d{17,20}):(\d{1,2}):(\d{1,6}))?$/.exec(
+    /^manage:(pick|page|stop):(\d{17,20})(?::([1-9]\d{0,3}):(\d{17,20}):(\d{1,2}):(\d{1,6})(?::(matchday-(?:[1-9]|1\d|2[0-5])|round-of-16|quarterfinal|semifinal|final))?)?$/.exec(
       interaction.customId,
     );
   if (!parsed || parsed[2] !== interaction.user.id || !interaction.guild) {
@@ -414,7 +474,7 @@ async function handleRemovalComponent(interaction, store, managerRoleId) {
       "Diese Auswahl gehört zu einer anderen Person oder ist ungültig. Bitte /report-entfernen erneut verwenden.",
     );
   }
-  const [, action, , season, playerId, matchday, page] = parsed;
+  const [, action, , season, playerId, matchday, page, roundId] = parsed;
   if (action === "stop") {
     await interaction.update({
       content: "Aktion abgebrochen.",
@@ -446,7 +506,7 @@ async function handleRemovalComponent(interaction, store, managerRoleId) {
       "Diese Auswahl ist ungültig. Bitte /report-entfernen erneut verwenden.",
     );
   await interaction.deferUpdate();
-  const query = { season: Number(season), playerId, matchday: Number(matchday) };
+  const query = { season: Number(season), playerId, matchday: Number(matchday), roundId };
   const matches = matchingRemovals(
     await removableMatches(interaction, store, managerRoleId),
     query,
@@ -546,18 +606,31 @@ async function correctionData(interaction, record, roleId, settingsStore) {
     }),
   );
   // Read the submitted dropdown after member lookups and keep the report's original season.
-  const selectedDays = interaction.fields.getStringSelectValues("matchday");
-  const matchday = Number(selectedDays[0]);
-  if (
-    selectedDays.length !== 1 ||
-    !/^[1-9]\d?$/.test(selectedDays[0]) ||
-    matchday > maximumMatchday(record, settingsStore)
-  ) {
+  const { planned, rounds } = correctionRounds(record, settingsStore);
+  const selection = planned
+    ? selectedRound(interaction.fields, "round", rounds)
+    : selectedRound(
+        {
+          getStringSelectValues: () =>
+            interaction.fields
+              .getStringSelectValues("matchday")
+              .map((value) => `matchday-${value}`),
+        },
+        "matchday",
+        rounds,
+      );
+  if (!selection) {
     throw new ReportManagementError(
-      "Dieser Spieltag gehört nicht zur Season des Reports. Bitte die Korrektur erneut öffnen und einen gültigen Spieltag auswählen.",
+      planned
+        ? "Diese Runde gehört nicht zur Season des Reports. Bitte die Korrektur erneut öffnen und eine gültige Runde auswählen."
+        : "Dieser Spieltag gehört nicht zur Season des Reports. Bitte die Korrektur erneut öffnen und einen gültigen Spieltag auswählen.",
     );
   }
   const season = record.season;
+  const context = {
+    season,
+    ...(planned ? roundFields(selection) : { matchday: selection.matchday }),
+  };
   const score = interaction.fields.getTextInputValue("score");
   validateScore(score);
   const target = matchData({
@@ -567,15 +640,19 @@ async function correctionData(interaction, record, roleId, settingsStore) {
     change: undefined,
     revision: undefined,
     result: undefined,
-    season,
-    matchday,
+    round: undefined,
+    matchday: undefined,
+    ...context,
     players,
     link: normalizeReplayLink(interaction.fields.getTextInputValue("link")),
   });
-  const message = createResultMessage(players[0].name, players[1].name, score, target.link, {
-    season,
-    matchday,
-  });
+  const message = createResultMessage(
+    players[0].name,
+    players[1].name,
+    score,
+    target.link,
+    context,
+  );
   return {
     kind: "edit",
     target,
@@ -600,9 +677,10 @@ async function handleManagementComponent(
     await handleRemovalComponent(interaction, store, managerRoleId);
     return;
   }
-  const parsed = /^manage:(edit|delete|cancel):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})$/.exec(
-    interaction.customId,
-  );
+  const parsed =
+    /^manage:(edit|delete|cancel):([a-f0-9]{24}):([a-f0-9]{16}):(\d{17,20})(?::([a-f0-9]{12}))?$/.exec(
+      interaction.customId,
+    );
   if (!parsed || parsed[4] !== interaction.user.id)
     throw new ReportManagementError(
       "Diese Aktion gehört zu einer anderen Person oder ist ungültig. Bitte erneut am Ergebnispost öffnen.",
@@ -623,6 +701,13 @@ async function handleManagementComponent(
     throw new ReportManagementError(
       "Dieser Report wurde inzwischen geändert. Bitte die Aktion erneut öffnen.",
     );
+  const verifyPlan = () => {
+    if (action === "edit" && correctionRounds(record, settingsStore).token !== parsed[5])
+      throw new ReportManagementError(
+        "Der Rundenplan wurde inzwischen geändert. Bitte die Korrektur erneut öffnen.",
+      );
+  };
+  verifyPlan();
   if (action === "edit") await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
   const channel = await resolveChannel(interaction, record);
@@ -634,6 +719,7 @@ async function handleManagementComponent(
   const member = await currentMember(interaction);
   authorize(interaction, store.get(id, record.guildId), action, roleId, managerRoleId, member);
   checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
+  verifyPlan();
   const kind = await manager.apply(
     id,
     record.guildId,
@@ -647,7 +733,7 @@ async function handleManagementComponent(
     content:
       kind === "delete"
         ? "✅ Report und Suchtreffer wurden entfernt."
-        : `✅ Report korrigiert: **Season ${change.target.season} · Spieltag ${change.target.matchday}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
+        : `✅ Report korrigiert: **${seasonRoundLabel(change.target)}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
     components: [],
     embeds: [],
     allowedMentions: { parse: [] },

@@ -4,11 +4,11 @@ Ein selbst gehosteter Discord-Bot für Pokémon-Draft-Ligen. Ergebnisse bleiben 
 
 ## Funktionen
 
-- `/report`: Modal mit Spieltag, Gewinner, Verlierer, Score und Replay-Link. Die Spieler stammen aus den Server-Anzeigenamen einer konfigurierten Teilnehmerrolle.
-- Automatische Spieltage: Eine Season wird mit Startmontag und Anzahl der Spieltage eingerichtet. Der Wochenwechsel erfolgt montags um 00:00 Uhr in `Europe/Berlin`, einschließlich Sommerzeitwechseln.
-- Ergebnisposts mit Season und Spieltag, Spoilern für Gewinner/Verlierer/Score und zufälliger Reihenfolge der Namen im Titel.
+- `/report`: Modal mit Runde, Gewinner, Verlierer, Score und Replay-Link. Die Spieler stammen aus den Server-Anzeigenamen einer konfigurierten Teilnehmerrolle.
+- Automatischer Seasonplan: Liga, Liga mit Playoffs oder Hin-/Rückrunde, jeweils mit optionaler Redraft-Woche zwischen Spielphasen. Der Wochenwechsel erfolgt montags um 00:00 Uhr in `Europe/Berlin`, einschließlich Sommerzeitwechseln.
+- Ergebnisposts mit Season und Runde, Spoilern für Gewinner/Verlierer/Score und zufälliger Reihenfolge der Namen im Titel.
 - **Bearbeiten** und **Löschen** als Buttons direkt unter dem Ergebnispost. Keine zusätzlichen Rechtsklick-/Apps-Aktionen.
-- `/suchen`: Replay-Links mit Spieltag und Teilnehmern als normale, dauerhaft sichtbare DMs.
+- `/suchen`: Replay-Links mit Runde und Teilnehmern als normale, dauerhaft sichtbare DMs.
 - `/liga log season:…`: Lesbares Änderungsprotokoll genau einer Season als `.txt`-Datei per DM. Die Season ist verpflichtend.
 - `/report-entfernen`: Archivbereinigung auch bei bereits gelöschtem Discord-Post, ohne Nachrichtenlink.
 - SQLite für Einstellungen, Reports, Melder, Ergebnisse, Versandvormerkungen und Änderungshistorie. Bestehende JSON-Daten werden einmalig übernommen.
@@ -109,26 +109,38 @@ Alle Slash-Befehle werden auf dem Liga-Server gestartet. Beispiele zeigen ausgew
 
 ```text
 /liga season nummer:4 spieltage:10 startdatum:19.10.2026
+/liga season nummer:5 spieltage:9 startdatum:19.10.2026 format:playoffs redraft:True playoffs_ab:semifinal
+/liga season nummer:6 spieltage:18 startdatum:19.10.2026 format:home-away redraft:True
 /liga status
 ```
 
-Das Startdatum muss ein Montag sein; `TT.MM.JJJJ` und `JJJJ-MM-TT` werden akzeptiert. Vor dem Start gilt Spieltag 1, nach dem Ende der letzte konfigurierte Spieltag. Der Wochenwechsel folgt dem Kalender und braucht keinen wöchentlichen Eingriff. Neustarts und Offline-Zeiten ändern daran nichts. Eine erneute Einrichtung verändert keine bestehenden Reports. Für eine neue Season eine neue Nummer verwenden. Maximal 25 Spieltage pro Season sind vorgesehen.
+Das Startdatum muss ein Montag sein; `TT.MM.JJJJ` und `JJJJ-MM-TT` werden akzeptiert. Jede spielbare Runde und die optionale Redraft-Pause dauern eine Woche, jeweils Montag bis Sonntag in `Europe/Berlin`. Der Wochenwechsel folgt dem Kalender und braucht keinen wöchentlichen Eingriff. Neustarts, Offline-Zeiten und Sommerzeit ändern daran nichts. Für eine neue Season eine neue Nummer verwenden.
+
+`format` bietet die Auswahlen **Liga ohne Playoffs** (`league`, Standard), **Liga mit Playoffs** (`playoffs`) und **Hin- und Rückrunde ohne Playoffs** (`home-away`). `spieltage` zählt ausschließlich reguläre Spieltage, bei Hin-/Rückrunde beide Hälften zusammen: `18` bedeutet neun Hin- und neun Rückrundenspieltage. Dafür ist eine gerade Gesamtzahl erforderlich; die Nummerierung läuft von 1 bis 18 durch. Die Optionswerte in den Beispielen entsprechen den internen Auswahlwerten; Discord zeigt die deutschen Bezeichnungen an.
+
+`playoffs_ab` wählt die erste K.-o.-Runde: Achtelfinale (`round-of-16`), Viertelfinale (`quarterfinal`), Halbfinale (`semifinal`, Standard) oder Finale (`final`). Alle folgenden Runden bis zum Finale werden ergänzt. Diese Option ist nur beim Playoff-Format zulässig; ohne explizites Format wählt sie automatisch Liga mit Playoffs. Es werden Rundenbezeichnungen und Termine verwaltet, kein automatischer Turnierbaum oder eine Qualifikation anhand von Ergebnissen.
+
+`redraft:True` fügt eine Pause ein: vor den Playoffs oder zwischen Hin- und Rückrunde. Standard ist keine Pause. Eine reine Liga ohne folgende Spielphase erlaubt keinen Redraft. Bei neun regulären Spieltagen, Redraft und Halbfinale liegen Spieltag 9 in Woche 9, Redraft in Woche 10, Halbfinale in Woche 11 und Finale in Woche 12. Bei 18 Hin-/Rückrundenspieltagen liegen die Pause ebenfalls in Woche 10 und Spieltag 10 in Woche 11.
+
+Das Dropdown unterstützt höchstens 25 **spielbare** Runden insgesamt; Playoffs zählen dazu, die Redraft-Pause nicht. Ungültige Kombinationen werden vor dem Speichern abgewiesen. `/liga status` zeigt die aktuelle Runde beziehungsweise Redraft und die nächste Runde an. Vor Beginn ist die erste Runde vorausgewählt, nach dem Ende die letzte; der Status weist auf den noch ausstehenden Start beziehungsweise das Ende hin.
+
+Eine erneute Einrichtung ändert vorhandene Posts nicht. Neue Reports speichern ihre Rundenbezeichnung unabhängig vom aktiven Plan. Beim Seasonwechsel bleiben vorherige Einstellungen für historische Korrekturen erhalten. Ein während der Eingabe geänderter Rundenplan macht betroffene Formulare ungültig; sie müssen erneut geöffnet werden.
 
 ### Ergebnis melden
 
-`/report` öffnet das Modal. Der aktuelle Spieltag ist vorausgewählt; andere Spieltage bleiben für Nachholspiele auswählbar. Die Dropdowns enthalten 2–25 menschliche Mitglieder der Teilnehmerrolle, sortiert nach Server-Anzeigename. Namensgleichheiten bleiben durch Discord-IDs unterscheidbar.
+`/report` öffnet das Modal mit weiterhin fünf Feldern. Das Dropdown **Runde** enthält reguläre Spieltage, gegebenenfalls mit Hin-/Rückrunde, sowie die konfigurierten Playoff-Runden. Die aktuelle Runde ist vorausgewählt; andere Runden bleiben für Nachholspiele auswählbar. Redraft ist keine meldbare Runde. In der Redraft-Woche ist keine Runde vorausgewählt; für Nachholspiele die zugehörige Runde ausdrücklich auswählen. Die beiden Spieler-Dropdowns enthalten 2–25 menschliche Mitglieder der Teilnehmerrolle, sortiert nach Server-Anzeigename. Namensgleichheiten bleiben durch Discord-IDs unterscheidbar.
 
 Beim Absenden werden Mitglieder, Rolle und Bot-Status erneut geprüft. Ein Formular einer inzwischen gewechselten Season wird abgewiesen. Scores müssen 1–100 Zeichen lang sein; Replay-Links müssen HTTP-/HTTPS-Adressen mit höchstens 1024 Zeichen sein. Das Replay wird nicht extern abgerufen oder inhaltlich geprüft.
 
-Der Post erscheint im Aufrufkanal, die Bestätigung ist privat. Erwähnungen sind deaktiviert und Namen bzw. Scores werden für die Spoilerdarstellung escaped. Der Duplikatschlüssel enthält Server, Kanal, Season, Spieltag, beide Spieler-IDs und normalisierten Replay-Link. Ein anderer Score oder vertauschter Gewinner erzeugt keinen weiteren Post; veröffentlichte Duplikate verweisen auf die bestehende Nachricht.
+Der Post erscheint im Aufrufkanal, die Bestätigung ist privat. Die kleine Kopfzeile zeigt beispielsweise `Season 5 · Playoffs · Halbfinale` oder `Season 6 · Rückrunde · Spieltag 10`; darunter steht der Matchtitel mit beiden Namen. Erwähnungen sind deaktiviert und Namen bzw. Scores werden für die Spoilerdarstellung escaped. Der Duplikatschlüssel enthält Server, Kanal, Season, Runden-ID, beide Spieler-IDs und normalisierten Replay-Link. Ein anderer Score oder vertauschter Gewinner erzeugt keinen weiteren Post; veröffentlichte Duplikate verweisen auf die bestehende Nachricht.
 
 ### Bearbeiten und löschen
 
-**Bearbeiten** unter dem Post öffnet direkt das vorausgefüllte Modal mit Spieltag, Gewinner, Verlierer, Score und Replay-Link. Die Season bleibt die des Reports und steht im Titel. Der bisherige Spieltag ist vorausgewählt. Bei historischen Seasons stehen bis zu 25 Spieltage zur Verfügung; für die aktive Season gilt deren konfigurierte Grenze. Wurde ein bisheriger Spieltag durch eine Verkürzung ungültig, muss ein gültiger Wert ausdrücklich ausgewählt werden.
+**Bearbeiten** unter dem Post öffnet direkt das vorausgefüllte Modal mit Runde, Gewinner, Verlierer, Score und Replay-Link. Die Season bleibt die des Reports und steht im Titel. Das Dropdown verwendet auch nach einem Seasonwechsel den ursprünglichen Seasonplan. Wechsel zwischen Ligaspieltag und Playoffs aktualisieren Post, Archiv und Log zusammen; bei Playoffs wird keine künstliche Spieltagsnummer gespeichert. Bereits gespeicherte Rundenmetadaten bleiben bei einer reinen Ergebniskorrektur erhalten, auch wenn die Seasonkonfiguration später geändert wurde. Bei alten Reports ohne historischen Plan stehen bis zu 25 reguläre Spieltage zur Verfügung; für eine noch bekannte Season gilt deren Grenze. Wurde ein bisheriger alter Spieltag durch eine Verkürzung ungültig, muss ein gültiger Wert ausdrücklich ausgewählt werden.
 
 Erst das Absenden ändert denselben Discord-Post und seinen Suchtreffer. Nachrichten-ID und Melder bleiben erhalten. Schließen bzw. Abbrechen verändert keine Daten. Historische Teilnehmer bleiben auswählbar, auch ohne aktuelle Rolle oder Servermitgliedschaft; neu hinzugefügte Teilnehmer benötigen die Teilnehmerrolle. Bei gleichen gespeicherten Namen wird der ursprüngliche Gewinner nicht geraten.
 
-**Löschen** zeigt eine private Bestätigung mit Season, Spieltag, Teilnehmern, Replay-Link und Kanal. Erst **Ja, Report löschen** entfernt Post und Suchtreffer. Der Logeintrag bleibt erhalten.
+**Löschen** zeigt eine private Bestätigung mit Season, Runde, Teilnehmern, Replay-Link und Kanal. Erst **Ja, Report löschen** entfernt Post und Suchtreffer. Der Logeintrag einschließlich ursprünglicher Runde bleibt erhalten.
 
 Die Buttons enthalten feste Report-IDs und benötigen keine kurzlebigen Collector; sie funktionieren nach Neustarts weiter. Vorhandene, im Archiv eindeutig verknüpfte Posts erhalten beim Start nach Möglichkeit ebenfalls Buttons. Fremde Nachrichten und Webhook-Posts werden nicht verändert. Bereits gelöschte Posts bleiben zur Archivbereinigung gespeichert.
 
@@ -137,18 +149,20 @@ Die Buttons enthalten feste Report-IDs und benötigen keine kurzlebigen Collecto
 ```text
 /report-entfernen season:4 name:Jan
 /report-entfernen season:4 name:Jan spieltag:3
+/report-entfernen season:5 name:Jan runde:semifinal
 ```
 
-Ein Nachrichtenlink ist nicht nötig. Ein einzelner Treffer öffnet die private Bestätigung. Mehrere Treffer werden per Dropdown mit Spieltag, Teilnehmern und Replay-Link ausgewählt; ab 26 Treffern gibt es Seiten. Immer nur ein Report wird nach Bestätigung entfernt. Fehlt die Discord-Nachricht bereits, bereinigt der Bot nur das Archiv und protokolliert die Löschung.
+Ein Nachrichtenlink ist nicht nötig. Der optionale Filter `runde` bietet Vorschläge wie **Playoffs · Halbfinale** oder **Rückrunde · Spieltag 10**. `spieltag` bleibt als Alternative für reguläre Spieltage verfügbar; beide Filter gleichzeitig werden abgewiesen. Ein einzelner Treffer öffnet die private Bestätigung. Mehrere Treffer werden per Dropdown mit Runde, Teilnehmern und Replay-Link ausgewählt; ab 26 Treffern gibt es Seiten, die den Rundenfilter beibehalten. Immer nur ein Report wird nach Bestätigung entfernt. Fehlt die Discord-Nachricht bereits, bereinigt der Bot nur das Archiv und protokolliert die Löschung.
 
 ### Replays suchen
 
 ```text
 /suchen season:4 name:Jan
 /suchen season:4 name:Jan spieltag:3
+/suchen season:5 name:Jan runde:semifinal
 ```
 
-Season und Name sind Pflichtfelder, Spieltag ist optional. Vorschläge stammen aus dem Archiv, einschließlich früherer Namen und ehemaliger Teilnehmer. Bei identischen Namen einen eindeutigen Vorschlag auswählen. Die Ausgabe enthält ausschließlich Spieltag, Teilnehmer und Replay-Link.
+Season und Name sind Pflichtfelder. `runde` filtert optional nach einer konkreten Liga- oder Playoff-Runde, `spieltag` alternativ nach einem regulären Spieltag. Ohne Rundenfilter erscheinen alle Replays einschließlich Playoffs. Vorschläge stammen aus dem Archiv, einschließlich früherer Namen und ehemaliger Teilnehmer. Bei identischen Namen einen eindeutigen Vorschlag auswählen. Die Ausgabe enthält ausschließlich Runde, Teilnehmer und Replay-Link.
 
 Treffer kommen als normale DMs. Gesperrte DMs oder teilweise fehlgeschlagener Versand werden privat erklärt. Ergebnisse und Vorschläge berücksichtigen lesbare Ergebniskanäle. Die Suche nutzt den SQLite-Index für Server und Season und benötigt keine aktive Season.
 
@@ -172,12 +186,14 @@ Die aktive Datei ist **`liga.sqlite`** im Datenverzeichnis:
 
 | Tabelle        | Inhalt                                                                                    |
 | -------------- | ----------------------------------------------------------------------------------------- |
-| `settings`     | Liga-Konfiguration pro Server                                                             |
+| `settings`     | Aktuelle Liga-Konfiguration pro Server und frühere Seasonpläne unter `history[season]`    |
 | `reports`      | Suchmetadaten, Melder, Ergebnis, Versandstatus, Nachrichten-ID und vorgemerkte Änderungen |
 | `audit_events` | Eigenständige Vorher-/Nachher-Protokolle, unabhängig vom Fortbestand des Reports          |
 | `metadata`     | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat  |
 
 Das Protokoll enthält bewusst auch Gewinner und Score. Die beschriebene Rollenfreigabe gilt daher für den Abruf. Bot-Tokens werden nicht in SQLite gespeichert.
+
+Die Tabellenstruktur bleibt gleich. Neue Einstellungen ergänzen `format`, `redraft`, gegebenenfalls `playoffsFrom` und den geordneten Wochenplan `rounds`; frühere Pläne werden ohne verschachtelte Historien in derselben Settings-Zeile aufbewahrt. Reports speichern eine geprüfte `round`-Momentaufnahme mit fester ID. Nur Ligaspiele haben zusätzlich `matchday`; Playoffs tragen ihre eigene Runde, Pausen werden nie als Report gespeichert. Alte Datensätze mit ausschließlich `matchday` sowie bestehende Änderungsvormerkungen bleiben lesbar. Backups enthalten auch die historischen Pläne.
 
 Beim ersten Start ohne initialisierte Datenbank werden vorhandene `league-settings.json` und `matches.json` geprüft. Eine zusätzliche Kopie entsteht unter `migration-json-…/`. Einstellungen, IDs, Versandvormerkungen und unterbrochene Änderungen werden transaktional übernommen. Die Originaldateien bleiben unverändert und werden danach nicht mehr als aktiver Speicher eingelesen.
 
@@ -255,6 +271,7 @@ Beim Erstellen und Korrigieren gilt dieselbe Score-Prüfung: 1 bis 100 Zeichen u
 | `match-store.js`, `league-settings.js`                           | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups                        |
 | `json-storage.js`                                                | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien |
 | `data-types.js`                                                  | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog         |
+| `season-rounds.js`                                               | Rundenplan, Playoff-Stufen, Rundenbezeichnungen, Auswahlprüfung und Rundenfilter                     |
 | `permissions.js`                                                 | Gemeinsame Rollenprüfung und handelnde Person                                                        |
 | `diagnostics.js`                                                 | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern                  |
 | `report-handler.js`, `reports.js`, `report-publisher.js`         | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus                                |
@@ -267,7 +284,7 @@ Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Au
 
 Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
 
-Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Spieltag, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der Spieltage und Startdatum; der aktuelle Spieltag wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit weniger Metadaten bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
+Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Runde, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der regulären Spieltage, Startdatum und gegebenenfalls den Wochenplan; die aktuelle Runde wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit ausschließlich einem numerischen Spieltag bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
 
 Beide Speicher aktualisieren ihren Zustand erst nach erfolgreichem Schreiben. SQLite speichert Report und zugehörigen Logeintrag weiterhin in derselben Transaktion. Die JSON-Kompatibilität verwendet eine gemeinsame Hilfsfunktion: Sie schreibt in eine exklusiv angelegte temporäre Datei im Zielordner und ersetzt danach die Zieldatei per Umbenennung. Bei Fehlern bleibt der vorherige Stand erhalten; die Bereinigung entfernt nur die selbst angelegte temporäre Datei. Schlägt auch die Bereinigung fehl, bleiben beide Fehlerursachen für die Diagnose verfügbar. Datenformat und Konfiguration ändern sich dadurch nicht.
 

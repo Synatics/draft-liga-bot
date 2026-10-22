@@ -7,6 +7,7 @@ const {
 const { LeagueSettingsError } = require("./league-settings");
 const { isParticipant, isLeagueManager, currentMember } = require("./permissions");
 const { logError, interactionContext } = require("./diagnostics");
+const { seasonRoundLabel } = require("./season-rounds");
 
 const clean = (value) =>
   String(value ?? "unbekannt").replace(
@@ -32,7 +33,7 @@ function describe(snapshot) {
     .join(" vs. ");
   const name = (id) => snapshot.players.find((player) => player.id === id)?.name || id;
   return [
-    `Season ${snapshot.season} · Spieltag ${snapshot.matchday} · ${players}`,
+    `${seasonRoundLabel(snapshot)} · ${players}`,
     `Gewinner: ${clean(snapshot.result ? name(snapshot.result.winnerId) : undefined)}`,
     `Verlierer: ${clean(snapshot.result ? name(snapshot.result.loserId) : undefined)}`,
     `Ergebnis: ${clean(snapshot.result?.score)}`,

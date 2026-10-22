@@ -7,6 +7,13 @@ const {
   escapeMarkdown,
 } = require("discord.js");
 const { logError, interactionContext } = require("./diagnostics");
+const {
+  matchRoundLabel,
+  roundOf,
+  roundOrder,
+  roundChoices,
+  resolveRoundFilter,
+} = require("./season-rounds");
 
 class SearchError extends Error {}
 
@@ -39,6 +46,13 @@ const searchCommand = {
       required: false,
       min_value: 1,
       max_value: 25,
+    },
+    {
+      name: "runde",
+      description: "Optional: konkrete Liga- oder Playoff-Runde auswählen (alternativ zu spieltag)",
+      type: ApplicationCommandOptionType.String,
+      autocomplete: true,
+      max_length: 100,
     },
   ],
 };
@@ -112,11 +126,11 @@ function resolvePlayer(matches, season, input) {
 function resultMessages(matches) {
   const messages = [];
   let content = "";
-  for (const match of [...matches].sort((a, b) => a.matchday - b.matchday)) {
+  for (const match of [...matches].sort((a, b) => roundOrder(a) - roundOrder(b))) {
     const names = match.players
       .map((player) => escapeMarkdown(player.name.replace(/[\r\n]/g, " ")))
       .join(" vs. ");
-    const line = `**Spieltag ${match.matchday} · ${names}**\n<${match.link}>`;
+    const line = `**${matchRoundLabel(match)} · ${names}**\n<${match.link}>`;
     if (content && content.length + line.length + 2 > 2000) {
       messages.push(content);
       content = "";
@@ -130,6 +144,17 @@ function resultMessages(matches) {
 async function handleSearchAutocomplete(interaction, store) {
   const season = interaction.options.getInteger("season");
   const focused = interaction.options.getFocused(true);
+  if (focused.name === "runde") {
+    await interaction.respond(
+      season
+        ? roundChoices(
+            visibleMatches(interaction, store, season).filter((match) => match.season === season),
+            focused.value,
+          )
+        : [],
+    );
+    return;
+  }
   const choices =
     focused.name === "name" && season
       ? playerChoices(visibleMatches(interaction, store, season), season, String(focused.value))
@@ -155,12 +180,19 @@ async function handleSearchCommand(interaction, store) {
     );
   }
   const matches = visibleMatches(interaction, store, season);
+  const roundInput = interaction.options.get?.("runde")?.value;
+  const roundId = roundInput == null ? undefined : resolveRoundFilter(roundInput, matches);
+  if (roundInput != null && (!roundId || matchday != null))
+    throw new SearchError(
+      "Bitte eine gültige Runde auswählen und entweder runde oder spieltag verwenden.",
+    );
   const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
   const found = player
     ? matches.filter(
         (match) =>
           match.season === season &&
           (matchday == null || match.matchday === matchday) &&
+          (!roundId || roundOf(match).id === roundId) &&
           match.players.some((entry) => entry.id === player.id),
       )
     : [];

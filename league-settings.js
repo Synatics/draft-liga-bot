@@ -2,6 +2,7 @@ const { readFileSync } = require("node:fs");
 const { join, resolve, relative, isAbsolute, sep } = require("node:path");
 const { causedError } = require("./diagnostics");
 const { writeJsonAtomic } = require("./json-storage");
+const { buildRounds } = require("./season-rounds");
 
 /** @typedef {import('./data-types').SeasonSettings} SeasonSettings */
 
@@ -51,7 +52,15 @@ function currentMatchday(settings, now = new Date()) {
   validateSettings(settings);
   // Keep previously saved manual settings readable until a start date is configured once.
   if (settings.startDate === undefined) return settings.currentMatchday;
-  const start = normalizeStartDate(settings.startDate).split("-").map(Number);
+  if (settings.rounds) {
+    const round = seasonProgress(settings, now).currentRound;
+    return round?.kind === "league" ? round.matchday : undefined;
+  }
+  return Math.min(settings.matchdays, Math.max(1, calendarWeek(settings.startDate, now)));
+}
+
+function calendarWeek(startDate, now) {
+  const start = normalizeStartDate(startDate).split("-").map(Number);
   const parts = Object.fromEntries(
     berlinDate
       .formatToParts(now)
@@ -60,7 +69,25 @@ function currentMatchday(settings, now = new Date()) {
   );
   // Compare calendar dates, not elapsed hours: DST weeks can have 167 or 169 hours.
   const days = (calendarDate(parts.year, parts.month, parts.day) - calendarDate(...start)) / DAY_MS;
-  return Math.min(settings.matchdays, Math.max(1, Math.floor(days / 7) + 1));
+  return Math.floor(days / 7) + 1;
+}
+
+function seasonProgress(settings, now = new Date()) {
+  const week = calendarWeek(settings.startDate, now);
+  const current = settings.rounds[Math.min(settings.rounds.length - 1, Math.max(0, week - 1))];
+  return {
+    week,
+    currentRound: structuredClone(current),
+    status:
+      week < 1
+        ? "upcoming"
+        : week > settings.rounds.length
+          ? "finished"
+          : current.kind === "break"
+            ? "redraft"
+            : "active",
+    ...(current.kind === "break" ? { nextRound: structuredClone(settings.rounds[week]) } : {}),
+  };
 }
 
 function checkInteger(value, label, maximum) {
@@ -69,14 +96,50 @@ function checkInteger(value, label, maximum) {
   }
 }
 
-function validateSettings(settings) {
+function validateSettings(settings, allowHistory = true) {
   if (!settings || typeof settings !== "object")
     throw new LeagueSettingsError("Ungültige Liga-Einstellungen.");
   checkInteger(settings.season, "Die Season", 9999);
   checkInteger(settings.matchdays, "Die Anzahl der Spieltage", 25);
   if (settings.startDate !== undefined) normalizeStartDate(settings.startDate);
-  if (settings.startDate === undefined || settings.currentMatchday !== undefined) {
+  if (
+    settings.rounds !== undefined ||
+    settings.format !== undefined ||
+    settings.redraft !== undefined ||
+    settings.playoffsFrom !== undefined
+  ) {
+    if (!settings.startDate || !settings.format || !Array.isArray(settings.rounds))
+      throw new LeagueSettingsError("Ungültiger gespeicherter Seasonplan.");
+    let expected;
+    try {
+      expected = buildRounds(settings.matchdays, settings);
+    } catch (error) {
+      throw new LeagueSettingsError(error.message);
+    }
+    if (JSON.stringify(settings.rounds) !== JSON.stringify(expected))
+      throw new LeagueSettingsError("Der gespeicherte Rundenplan passt nicht zum Season-Format.");
+  }
+  if (
+    (!settings.rounds && settings.startDate === undefined) ||
+    settings.currentMatchday !== undefined
+  ) {
     checkInteger(settings.currentMatchday, "Der Spieltag", settings.matchdays);
+  }
+  if (settings.history !== undefined) {
+    if (
+      !allowHistory ||
+      !settings.history ||
+      typeof settings.history !== "object" ||
+      Array.isArray(settings.history)
+    )
+      throw new LeagueSettingsError("Ungültige historische Seasonpläne.");
+    for (const [number, previous] of Object.entries(settings.history)) {
+      validateSettings(previous, false);
+      if (String(previous.season) !== number || previous.season === settings.season)
+        throw new LeagueSettingsError(
+          "Ein historischer Seasonplan gehört zu einer anderen Season.",
+        );
+    }
   }
 }
 
@@ -145,31 +208,73 @@ class LeagueSettingsStore {
 
   /** @param {string} guildId @returns {import('./data-types').ActiveSeason} */
   get(guildId) {
-    const settings = this.guilds[guildId];
-    if (!settings) {
+    return this.getSeason(guildId, this.guilds[guildId]?.season);
+  }
+
+  getSeason(guildId, season) {
+    const stored = this.guilds[guildId];
+    const source = stored?.season === season ? stored : stored?.history?.[season];
+    const { history, ...settings } = source ?? {};
+    if (!source) {
       throw new LeagueSettingsError(
         "Die Season ist noch nicht eingerichtet. Bitte mit /liga season die Nummer, Anzahl der Spieltage und das Startdatum einstellen.",
       );
     }
     return {
-      ...settings,
+      ...structuredClone(settings),
       ...(settings.startDate !== undefined
         ? { startDate: normalizeStartDate(settings.startDate) }
         : {}),
       currentMatchday: currentMatchday(settings, this.now()),
+      ...(settings.rounds ? seasonProgress(settings, this.now()) : {}),
     };
   }
 
-  setSeason(guildId, season, matchdays, startDate) {
+  setSeason(guildId, season, matchdays, startDate, options) {
     checkInteger(season, "Die Season", 9999);
     checkInteger(matchdays, "Die Anzahl der Spieltage", 25);
-    return this.save(guildId, { season, matchdays, startDate: normalizeStartDate(startDate) });
+    let plan = {};
+    if (options) {
+      const format = options.format ?? "league";
+      const redraft = options.redraft ?? false;
+      const playoffsFrom =
+        options.playoffsFrom ?? (format === "playoffs" ? "semifinal" : undefined);
+      try {
+        plan = {
+          format,
+          redraft,
+          ...(playoffsFrom ? { playoffsFrom } : {}),
+          rounds: buildRounds(matchdays, { format, redraft, playoffsFrom }),
+        };
+      } catch (error) {
+        throw new LeagueSettingsError(error.message);
+      }
+    }
+    return this.save(guildId, {
+      season,
+      matchdays,
+      startDate: normalizeStartDate(startDate),
+      ...plan,
+    });
   }
 
   /** @param {string} guildId @param {SeasonSettings} settings @returns {import('./data-types').ActiveSeason} */
   save(guildId, settings) {
     validateSettings(settings);
-    const guilds = { ...this.guilds, [guildId]: { ...settings } };
+    const previous = this.guilds[guildId];
+    const history = { ...previous?.history };
+    if (previous && previous.season !== settings.season) {
+      const { history: previousHistory, ...snapshot } = previous;
+      history[previous.season] = snapshot;
+    }
+    delete history[settings.season];
+    const guilds = {
+      ...this.guilds,
+      [guildId]: {
+        ...structuredClone(settings),
+        ...(Object.keys(history).length ? { history } : {}),
+      },
+    };
     const context = {
       operation: "settings.write",
       file: this.storage ? "liga.sqlite" : "league-settings.json",
@@ -199,4 +304,5 @@ module.exports = {
   normalizeStartDate,
   currentMatchday,
   parseSettingsDocument,
+  seasonProgress,
 };

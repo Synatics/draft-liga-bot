@@ -3,6 +3,7 @@ const { randomBytes, createHash } = require("node:crypto");
 const { EmbedBuilder } = require("discord.js");
 const { causedError } = require("./diagnostics");
 const { writeJsonAtomic } = require("./json-storage");
+const { isRound, roundOf, seasonRoundLabel } = require("./season-rounds");
 
 /** @typedef {import('./data-types').Match} Match */
 /** @typedef {import('./data-types').MatchData} MatchData */
@@ -78,9 +79,6 @@ function validateMatch(match) {
     !Number.isInteger(match.season) ||
     match.season < 1 ||
     match.season > 9999 ||
-    !Number.isInteger(match.matchday) ||
-    match.matchday < 1 ||
-    match.matchday > 25 ||
     !Array.isArray(match.players) ||
     match.players.length !== 2 ||
     match.players.some(
@@ -94,6 +92,16 @@ function validateMatch(match) {
     match.players[0].id === match.players[1].id
   ) {
     throw new MatchStoreError("Ungültige Daten für das Replay-Archiv.");
+  }
+  if (
+    match.round !== undefined
+      ? !isRound(match.round) ||
+        (match.round.kind === "league"
+          ? match.matchday !== match.round.matchday
+          : match.matchday !== undefined)
+      : !Number.isInteger(match.matchday) || match.matchday < 1 || match.matchday > 25
+  ) {
+    throw new MatchStoreError("Ungültige Daten für die Runde im Replay-Archiv.");
   }
   normalizeReplayLink(match.link);
   validateActor(match.reporter);
@@ -133,7 +141,8 @@ function matchData(match) {
     guildId: match.guildId,
     channelId: match.channelId,
     season: match.season,
-    matchday: match.matchday,
+    ...(match.matchday !== undefined ? { matchday: match.matchday } : {}),
+    ...(match.round !== undefined ? { round: structuredClone(match.round) } : {}),
     players: match.players
       .map(({ id, name }) => ({ id, name }))
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -146,7 +155,7 @@ function sameMatch(a, b) {
     a.guildId === b.guildId &&
     a.channelId === b.channelId &&
     a.season === b.season &&
-    a.matchday === b.matchday &&
+    roundOf(a).id === roundOf(b).id &&
     normalizeReplayLink(a.link) === normalizeReplayLink(b.link) &&
     a.players
       .map((player) => player.id)
@@ -182,7 +191,10 @@ function validateChange(change, match) {
     throw new MatchStoreError("Ungültige Korrekturdaten.");
   if (
     !target ||
-    Object.keys(target).sort().join() !== "channelId,guildId,link,matchday,players,season"
+    Object.keys(target)
+      .filter((key) => !["round", "matchday"].includes(key))
+      .sort()
+      .join() !== "channelId,guildId,link,players,season"
   ) {
     throw new MatchStoreError("Ungültige Korrekturdaten.");
   }
@@ -196,7 +208,7 @@ function validateChange(change, match) {
   try {
     const embed = new EmbedBuilder(change.embed).toJSON();
     if (
-      embed.author?.name !== `Season ${target.season} · Spieltag ${target.matchday}` ||
+      embed.author?.name !== seasonRoundLabel(target) ||
       embed.fields?.map((field) => field.name).join() !== "Gewinner,Verlierer,Score,Replay Link" ||
       embed.fields
         .slice(0, 3)
@@ -376,6 +388,8 @@ class MatchStore {
       ? previous
       : {
           ...previous,
+          matchday: undefined,
+          round: undefined,
           ...change.target,
           result: change.result,
           controlsVersion: 1,

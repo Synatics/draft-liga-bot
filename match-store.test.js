@@ -166,3 +166,31 @@ test("invalid replay URLs and malformed metadata cannot enter the archive", (t) 
   assert.equal(normalizeReplayLink(" https://example.org/a>test "), "https://example.org/a%3Etest");
   assert.equal(store.list(GUILD).length, 0);
 });
+
+test("playoffs have explicit round identities and never accept a fake matchday, break or inconsistent round metadata", (t) => {
+  const { store, filePath } = temporaryStore(t);
+  const semifinal = { id: "semifinal", kind: "playoffs" };
+  const first = store.add(record({ round: semifinal, matchday: undefined }));
+  const final = store.add(
+    record({ round: { id: "final", kind: "playoffs" }, matchday: undefined }),
+  );
+  assert.notEqual(
+    first.id,
+    final.id,
+    "The same players and replay in separate rounds remain distinct",
+  );
+  assert.equal(store.add(record({ round: semifinal, matchday: undefined })).id, first.id);
+  assert.equal(new MatchStore(filePath).get(first.id, GUILD).matchday, undefined);
+  const saved = readFileSync(filePath, "utf8");
+  for (const overrides of [
+    { round: semifinal, matchday: 1 },
+    { round: { id: "redraft", kind: "break" }, matchday: undefined },
+    { round: { id: "semifinal", kind: "league" } },
+    { round: { id: "matchday-2", kind: "league", matchday: 2 }, matchday: 1 },
+    { round: { ...semifinal, name: "injected label" }, matchday: undefined },
+    { round: { id: "unknown", kind: "playoffs" }, matchday: undefined },
+  ])
+    assert.throws(() => store.add(record(overrides)), /Ungültige Daten/);
+  assert.equal(readFileSync(filePath, "utf8"), saved);
+  assert.equal(store.list(GUILD).length, 2);
+});

@@ -12,12 +12,16 @@
  * @property {string} guildId Discord server ID.
  * @property {string} channelId Discord channel ID.
  * @property {number} season Integer, 1–9999.
- * @property {number} matchday Integer, 1–25.
+ * @property {number} [matchday] Integer, 1–25 for league rounds; absent for playoffs.
+ * @property {PlayableRound} [round] Explicit round snapshot; old reports use matchday alone.
  * @property {[Player, Player]} players Two distinct participants; stored sorted by ID, not by result.
  * @property {string} link Normalized HTTP(S) replay URL, at most 1024 characters.
  */
 
 /** @typedef {{winnerId: string, loserId: string, score: string}} MatchResult */
+/** @typedef {{id: string, kind: 'league', matchday: number, leg?: 'first' | 'second'} |
+ *   {id: 'round-of-16' | 'quarterfinal' | 'semifinal' | 'final', kind: 'playoffs'}} PlayableRound */
+/** @typedef {PlayableRound | {id: 'redraft', kind: 'break'}} SeasonRound */
 /** @typedef {MatchData & {reporter?: Player, result?: MatchResult}} MatchSnapshot */
 
 /**
@@ -45,6 +49,10 @@
  * @property {number} matchdays Integer, 1–25.
  * @property {string} startDate Monday of matchday 1; new settings use YYYY-MM-DD.
  * @property {number} [currentMatchday] Legacy field; ignored when a start date exists.
+ * @property {'league' | 'playoffs' | 'home-away'} [format] Legacy settings have no plan fields.
+ * @property {boolean} [redraft] Insert one unreportable calendar week between playing phases.
+ * @property {'round-of-16' | 'quarterfinal' | 'semifinal' | 'final'} [playoffsFrom]
+ * @property {SeasonRound[]} [rounds] Ordered weekly schedule, including any break.
  */
 
 /**
@@ -55,9 +63,11 @@
 /** @typedef {ScheduledSeason | ManualSeason} SeasonSettings */
 
 /**
- * get() adds the current matchday, derived from Monday–Sunday in Europe/Berlin and
- * capped at 1..matchdays. Advancing a week does not write to storage.
- * @typedef {SeasonSettings & {currentMatchday: number}} ActiveSeason
+ * get() returns a clone with calendar progress; getSeason() also reads historical plans.
+ * Raw per-guild storage retains previous settings in history[season], without nested history.
+ * Advancing a week does not write to storage. Playoffs/breaks have no numeric matchday.
+ * @typedef {SeasonSettings & {currentMatchday?: number, currentRound?: SeasonRound,
+ *   nextRound?: PlayableRound, week?: number, status?: 'upcoming' | 'active' | 'redraft' | 'finished'}} ActiveSeason
  */
 
 /**

@@ -87,7 +87,7 @@ class ReportManager {
           throw causedError(
             ReportManagementError,
             Number(error.code) === 10008
-              ? "Der Ergebnispost existiert nicht mehr. Du kannst seinen Archiv-Eintrag mit /report-entfernen über Season, Spieler und optional Spieltag finden und löschen."
+              ? "Der Ergebnispost existiert nicht mehr. Du kannst seinen Archiv-Eintrag mit /report-entfernen über Season, Spieler und optional Runde finden und löschen."
               : "Die Änderung wurde nicht durchgeführt. Bitte den Ergebnispost und die Kanalrechte des Bots prüfen und die Aktion erneut öffnen.",
             error,
             context,

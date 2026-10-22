@@ -8,6 +8,14 @@ const {
   escapeMarkdown,
 } = require("discord.js");
 const { validateSettings } = require("./league-settings");
+const {
+  playableRounds,
+  roundLabel,
+  roundFields,
+  planToken,
+  selectedRound,
+  seasonRoundLabel,
+} = require("./season-rounds");
 
 const SPACER = "⠀";
 
@@ -86,21 +94,29 @@ function createReportModal(participants, settings) {
       );
 
   return new ModalBuilder()
-    .setCustomId(`submit_report:${settings.season}`)
+    .setCustomId(
+      `submit_report:${settings.season}${settings.rounds ? `:${planToken(settings)}` : ""}`,
+    )
     .setTitle(`Ergebnis · Season ${settings.season}`)
     .addLabelComponents(
-      new LabelBuilder().setLabel("Spieltag").setStringSelectMenuComponent(
+      new LabelBuilder().setLabel("Runde").setStringSelectMenuComponent(
         new StringSelectMenuBuilder()
-          .setCustomId("matchday")
-          .setPlaceholder("Spieltag auswählen")
+          .setCustomId(settings.rounds ? "round" : "matchday")
+          .setPlaceholder(
+            settings.status === "redraft"
+              ? "Redraft: Runde für ein Nachholspiel auswählen"
+              : "Runde auswählen",
+          )
           .setMinValues(1)
           .setMaxValues(1)
           .setRequired(true)
           .addOptions(
-            Array.from({ length: settings.matchdays }, (_, index) => ({
-              label: `Spieltag ${index + 1}`,
-              value: String(index + 1),
-              default: index + 1 === settings.currentMatchday,
+            playableRounds(settings).map((round) => ({
+              label: roundLabel(round),
+              value: settings.rounds ? round.id : String(round.matchday),
+              default: settings.rounds
+                ? settings.currentRound?.id === round.id
+                : round.matchday === settings.currentMatchday,
             })),
           ),
       ),
@@ -131,10 +147,24 @@ function createReportModal(participants, settings) {
 
 function resolveReportContext(customId, fields, settings) {
   validateSettings(settings);
-  const match = /^submit_report:([1-9]\d*)$/.exec(customId);
+  const match = /^submit_report:([1-9]\d*)(?::([a-f0-9]{12}))?$/.exec(customId);
   if (!match || Number(match[1]) !== settings.season) {
     throw new ReportError("Die Season wurde inzwischen geändert. Bitte öffne /report erneut.");
   }
+  if (settings.rounds) {
+    if (match[2] !== planToken(settings))
+      throw new ReportError(
+        "Der Seasonplan wurde inzwischen geändert. Bitte öffne /report erneut.",
+      );
+    const round = selectedRound(fields, "round", playableRounds(settings));
+    if (!round)
+      throw new ReportError(
+        "Bitte wähle eine gültige spielbare Runde dieser Season. Während des Redrafts sind Nachholspiele über ihre Runde meldbar.",
+      );
+    return { season: settings.season, ...roundFields(round) };
+  }
+  if (match[2])
+    throw new ReportError("Der Seasonplan wurde inzwischen geändert. Bitte öffne /report erneut.");
   const selectedDays = fields.getStringSelectValues("matchday");
   const matchday = Number(selectedDays[0]);
   if (
@@ -204,7 +234,7 @@ function createResultEmbed(winner, loser, score, link) {
 
 function createResultMessage(winner, loser, score, link, context) {
   const embed = createResultEmbed(winner, loser, score, link).setAuthor({
-    name: `Season ${context.season} · Spieltag ${context.matchday}`,
+    name: seasonRoundLabel(context),
   });
   return {
     embeds: [embed],
