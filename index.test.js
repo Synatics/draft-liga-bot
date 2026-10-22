@@ -317,25 +317,14 @@ test("league settings, reports and role changes work together without exposing r
     async reply(payload) { this.response = payload; },
   };
   await handle(management);
-  const day = {
-    ...management, targetMessage: undefined, message: { embeds: management.response.embeds },
-    isMessageContextMenuCommand: () => false, isStringSelectMenu: () => true,
-    customId: management.response.components[1].toJSON().components[0].custom_id, values: ["3"],
-    async update(payload) { this.response = payload; },
-  };
-  await handle(day);
-  const form = {
-    ...day, isStringSelectMenu: () => false, isButton: () => true,
-    customId: day.response.components[2].toJSON().components[0].custom_id,
-  };
-  await handle(form);
-  assert.match(form.modal.title, /Report korrigieren/);
+  assert.match(management.modal.title, /Report korrigieren · Season 3/);
+  assert.equal(management.modal.components.length, 5);
   const correction = {
     ...management, isMessageContextMenuCommand: () => false, isModalSubmit: () => true,
-    customId: form.modal.custom_id,
+    customId: management.modal.custom_id,
     fields: {
       getTextInputValue: (name) => ({ score: "1-0", link: "https://example.org/corrected" })[name],
-      getStringSelectValues: (name) => [name === "winner" ? maxId : janId],
+      getStringSelectValues: (name) => [name === "matchday" ? "3" : name === "winner" ? maxId : janId],
     },
     async deferReply() { this.deferred = true; },
     async editReply(payload) { this.response = payload; },
