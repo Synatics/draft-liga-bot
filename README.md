@@ -240,16 +240,23 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 
 | Dateien | Aufgabe |
 | --- | --- |
-| `index.js`, `startup.js` | Startprüfung, Verbindung, Routing und Registrierung |
+| `index.js` | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden |
+| `bot.js` | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups |
+| `startup.js` | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern |
+| `interactions.js` | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten |
 | `database.js` | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen |
 | `match-store.js`, `league-settings.js` | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups |
 | `permissions.js` | Gemeinsame Rollenprüfung und handelnde Person |
 | `diagnostics.js` | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern |
-| `reports.js`, `report-publisher.js` | Formular, Spoiler und persistenter Versandstatus |
+| `report-handler.js`, `reports.js`, `report-publisher.js` | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus |
 | `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen |
 | `league-commands.js`, `audit-commands.js` | Verwaltung und Logdatei per DM |
 | `search-commands.js` | Replay-Suche |
 | `database-backups.js`, `data-backups.js`, `backup.js` | SQLite- und ältere JSON-Sicherungen |
+
+Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
+
+Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
 
 ## Technische Fehlerprotokolle
 

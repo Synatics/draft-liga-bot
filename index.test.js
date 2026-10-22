@@ -1,22 +1,24 @@
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
-const { readFileSync, mkdtempSync, rmSync } = require("node:fs");
+const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { dirname, join } = require("node:path");
 const { test } = require("node:test");
-const { runInNewContext } = require("node:vm");
 const discord = require("discord.js");
-const reports = require("./reports");
 const leagueSettings = require("./league-settings");
-const leagueCommands = require("./league-commands");
 const { MatchStore } = require("./match-store");
-const searchCommands = require("./search-commands");
+const { startBot } = require("./bot");
+const { prepareStartup } = require("./startup");
 
 test("league settings, reports and role changes work together without exposing results", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "pokemon-liga-index-test-"));
   let runtimeState;
-  t.after(() => {
-    runtimeState?.database.close();
+  t.after(async () => {
+    if (runtimeState) {
+      clearInterval(runtimeState.backupTimer);
+      await runtimeState.client.destroy();
+      runtimeState.database.close();
+    }
     assert.equal(dirname(directory), tmpdir());
     rmSync(directory, { recursive: true, force: true });
   });
@@ -76,71 +78,38 @@ test("league settings, reports and role changes work together without exposing r
   client.user = { id: botId };
   client.login = async () => { client.emit(discord.Events.ClientReady); };
   client.destroy = async () => {};
-  const source = readFileSync(require.resolve("./index"), "utf8");
   let registeredCommands;
   let failSaving = false;
   const errors = [];
 
-  // Run the real entry point without reading credentials, registering commands or logging in.
-  runInNewContext(source, {
-    require(name) {
-      if (name === "discord.js") return {
-        ...discord,
-        Client: class {
-          constructor(options) {
-            assert.ok(options.intents.includes(discord.GatewayIntentBits.GuildMembers));
-            return client;
-          }
-        },
-        REST: class {
-          setToken() { return this; }
-          async put(route, { body }) { registeredCommands = body; }
-          clearHashSweeper() {}
-          clearHandlerSweeper() {}
-        },
+  // Start the real bot with temporary SQLite storage and an offline Discord client.
+  runtimeState = await startBot({
+    env: { PARTICIPANT_ROLE_ID: roleId, LEAGUE_MANAGER_ROLE_ID: managerRoleId,
+      CLIENT_ID: "600000000000000001", DISCORD_TOKEN: "test-token", DATA_DIR: directory },
+    logger: { log() {}, error(...args) { errors.push(args); } },
+    prepare(env) {
+      const state = prepareStartup(env);
+      state.settingsStore.now = () => now;
+      const save = state.database.saveMatches.bind(state.database);
+      state.database.saveMatches = (matches, event) => {
+        if (failSaving) throw Object.assign(new Error("write failed: private-request-data"), { code: "ENOSPC" });
+        save(matches, event);
       };
-      if (name === "dotenv") return { config() {} };
-      if (name === "./reports") return reports;
-      if (name === "./report-publisher") return require(name);
-      if (name === "./report-manager" || name === "./report-management") return require(name);
-      if (["./database-backups", "./report-buttons", "./permissions", "./diagnostics"].includes(name)) return require(name);
-      if (name === "./startup") return {
-        ...require(name),
-        prepareStartup(env) {
-          const state = require(name).prepareStartup({ ...env, DATA_DIR: directory });
-          runtimeState = state;
-          state.settingsStore.now = () => now;
-          const save = state.database.saveMatches.bind(state.database);
-          state.database.saveMatches = (matches, event) => {
-            if (failSaving) throw Object.assign(new Error("write failed: private-request-data"), { code: "ENOSPC" });
-            save(matches, event);
-          };
-          return state;
-        },
-        connectDiscord(client, rest, commands, config) {
-          return require(name).connectDiscord(client, rest, commands, config, { logger: { log() {} } });
-        },
-        failStartup(error) { errors.push(["Unexpected startup failure", error]); },
-      };
-      if (name === "./data-backups") return {
-        ...require(name),
-        startAutomaticBackups(backups) {
-          const timer = require(name).startAutomaticBackups(backups, { log() {}, error(...args) { errors.push(args); } });
-          t.after(() => clearInterval(timer));
-          return timer;
-        },
-      };
-      if (name === "./match-store") return require(name);
-      if (name === "./search-commands") return searchCommands;
-      if (name === "./league-settings") return leagueSettings;
-      if (name === "./league-commands") return leagueCommands;
-      throw new Error(`Unexpected dependency: ${name}`);
+      return state;
     },
-    process: { env: { PARTICIPANT_ROLE_ID: roleId, LEAGUE_MANAGER_ROLE_ID: managerRoleId,
-      CLIENT_ID: "600000000000000001", DISCORD_TOKEN: "test-token" } },
-    console: { log() {}, error(...args) { errors.push(args); } },
+    createClient(options) {
+      assert.ok(options.intents.includes(discord.GatewayIntentBits.GuildMembers));
+      return client;
+    },
+    createRest() {
+      return {
+        setToken() { return this; },
+        async put(route, { body }) { registeredCommands = body; },
+        clearHashSweeper() {},
+        clearHandlerSweeper() {},
+      };
+    },
   });
-  await new Promise(setImmediate);
   assert.equal(errors.length, 0);
   const listener = client.listeners(discord.Events.InteractionCreate)[0];
   const handle = (interaction) => {

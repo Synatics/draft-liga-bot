@@ -128,17 +128,24 @@ async function connectDiscord(client, rest, commands, config, { logger = console
   }
 }
 
+async function cleanupStartup(client, database, { logger = console, timeoutMs = CLEANUP_TIMEOUT_MS } = {}) {
+  try { database?.close(); } catch (closeError) {
+    logError("Datenbank konnte beim Startabbruch nicht geschlossen werden:", closeError, { operation: "database.close" }, logger);
+  }
+  if (client) {
+    try { await withTimeout(() => client.destroy(), timeoutMs, "Discord-Verbindung konnte nicht rechtzeitig geschlossen werden."); } catch (closeError) {
+      logError("Die Discord-Verbindung konnte beim Startabbruch nicht regulär geschlossen werden.",
+        closeError, { operation: "discord.close" }, logger);
+    }
+  }
+}
+
 async function failStartup(error, client, { logger = console, runtime = process, timeoutMs = CLEANUP_TIMEOUT_MS } = {}) {
   runtime.exitCode = 1;
   logError(`❌ Bot-Start abgebrochen: ${error instanceof StartupError ? error.message : "Unerwarteter Fehler beim Initialisieren. Bitte Konfiguration und Datenspeicher prüfen."}`,
     error, {}, logger);
-  if (client) {
-    try { await withTimeout(() => client.destroy(), timeoutMs, "Discord-Verbindung konnte nicht rechtzeitig geschlossen werden."); } catch (closeError) {
-      logError("Die Discord-Verbindung konnte beim Startabbruch nicht regulär geschlossen werden; der Prozess wird beendet.",
-        closeError, { operation: "discord.close" }, logger);
-    }
-  }
+  await cleanupStartup(client, undefined, { logger, timeoutMs });
   runtime.exit(1);
 }
 
-module.exports = { StartupError, readConfiguration, verifyDataDirectory, prepareStartup, connectDiscord, failStartup, STARTUP_TIMEOUT_MS };
+module.exports = { StartupError, readConfiguration, verifyDataDirectory, prepareStartup, connectDiscord, cleanupStartup, failStartup, STARTUP_TIMEOUT_MS };
