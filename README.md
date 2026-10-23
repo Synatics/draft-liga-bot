@@ -2,6 +2,8 @@
 
 Ein selbst gehosteter Discord-Bot für Pokémon-Draft-Ligen. Ergebnisse bleiben hinter Spoilern, Replays lassen sich nach Season und Spieler suchen, und Änderungen sind über eine Logdatei nachvollziehbar. Die Oberfläche ist deutsch.
 
+Für die Veröffentlichung auf Discord: [Patch Notes und Kurzanleitung für Version 2.0](docs/RELEASE-2.0.0.md). Die drei durch Trennlinien getrennten Abschnitte sind jeweils als eigene Nachricht gedacht.
+
 ## Funktionen
 
 - `/report`: Modal mit Runde, Gewinner, Verlierer, Score und Replay-Link. Die Spieler stammen aus den Server-Anzeigenamen einer konfigurierten Teilnehmerrolle.
