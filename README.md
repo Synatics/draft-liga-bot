@@ -29,11 +29,11 @@ SQLite verwendet das eingebaute Modul `node:sqlite`. Ein zusätzlicher Datenbank
 2. Unter **Bot → Privileged Gateway Intents** den **Server Members Intent** aktivieren. Der Bot verwendet `Guilds` und `GuildMembers`; Message Content Intent ist nicht erforderlich.
 3. Die Anwendung mit den Scopes **`bot`** und **`applications.commands`** auf dem Server installieren.
 4. Eine bestehende Teilnehmerrolle auswählen und ihre ID kopieren. Dafür unter **Erweitert** den Entwicklermodus aktivieren.
-5. Optional eine separate Rolle für die Ligaverwaltung anlegen und deren ID kopieren.
+5. Eine separate Rolle für die Ligaverwaltung anlegen und deren ID kopieren.
 
 Der Bot benötigt in Ergebniskanälen **Kanal anzeigen**, **Nachrichten senden**, **Links einbetten** und **Nachrichtenverlauf anzeigen**. Bei Threads sind Zugriff und die passenden Thread-Senderechte nötig. Administrator, Rollenverwaltung und das Verwalten fremder Nachrichten werden nicht benötigt. Kanal-Overrides gelten zusätzlich. [Discord-Berechtigungen](https://docs.discord.com/developers/topics/permissions)
 
-Die **Ligaverwaltungsrolle** benötigt keine besonderen Serverrechte. Ihre Mitglieder brauchen Zugriff auf die Ergebniskanäle und deren Verlauf sowie die Freigabe für Anwendungsbefehle. Der Bot erkennt die Rolle anhand ihrer ID. Sie muss von der Teilnehmerrolle verschieden sein. „Server verwalten“ bzw. Administrator ist ebenfalls eine Verwaltungsfreigabe.
+Die **Ligaverwaltungsrolle** benötigt keine besonderen Serverrechte. Ihre Mitglieder brauchen Zugriff auf die Ergebniskanäle und deren Verlauf sowie die Freigabe für Anwendungsbefehle. Der Bot erkennt die Rolle anhand ihrer ID. Sie muss von der Teilnehmerrolle verschieden sein. Auch Personen mit „Server verwalten“ oder Administrator benötigen diese Rolle für Verwaltungsaktionen im Bot.
 
 ## Installation und Konfiguration
 
@@ -63,15 +63,15 @@ LEAGUE_MANAGER_ROLE_ID=deine-ligaverwaltungsrollen-id
 # DATA_DIR=./data
 ```
 
-| Variable                    | Bedeutung                                                                                 |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| `DISCORD_TOKEN`             | Pflichtwert: Bot-Token ohne `Bot`-Präfix                                                  |
-| `CLIENT_ID`                 | Pflichtwert: Application-ID desselben Bots                                                |
-| `PARTICIPANT_ROLE_ID`       | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports und Logabruf |
-| `LEAGUE_MANAGER_ROLE_ID`    | Optional: separate Verwaltungsrolle; ohne Wert verwalten nur Serververwalter die Liga     |
-| `DATA_DIR`                  | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount    |
-| `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad                                                   |
-| `RAILWAY_ENVIRONMENT_ID`    | Aktiviert die Railway-Volume-Prüfung                                                      |
+| Variable                    | Bedeutung                                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`             | Pflichtwert: Bot-Token ohne `Bot`-Präfix                                                                    |
+| `CLIENT_ID`                 | Pflichtwert: Application-ID desselben Bots                                                                  |
+| `PARTICIPANT_ROLE_ID`       | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports, Suche, Status und Logabruf    |
+| `LEAGUE_MANAGER_ROLE_ID`    | Separate Verwaltungsrolle; ohne Wert sind Season-Einrichtung, fremde Korrekturen und Löschaktionen gesperrt |
+| `DATA_DIR`                  | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount                      |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad                                                                     |
+| `RAILWAY_ENVIRONMENT_ID`    | Aktiviert die Railway-Volume-Prüfung                                                                        |
 
 Discord-IDs müssen 17–20 Ziffern haben. Ein gesetzter, ungültiger Rollenwert verhindert den Start. `.env`, Datenbank und Backups gehören nicht ins Repository.
 
@@ -85,21 +85,22 @@ Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine
 
 ## Berechtigungen im Bot
 
-| Aktion                         | Freigabe                                                                                                          |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `/report`                      | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter                                               |
-| `/suchen`                      | Anwendungsbefehle im Kanal verwenden dürfen; zusätzliche Kanal-/Integrationsregeln sind in Discord konfigurierbar |
-| Report bearbeiten              | Gespeicherte meldende Person mit aktueller Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter             |
-| Report löschen                 | Ligaverwaltungsrolle oder Serververwalter                                                                         |
-| `/report-entfernen`            | Ligaverwaltungsrolle oder Serververwalter                                                                         |
-| `/liga season`, `/liga status` | Ligaverwaltungsrolle oder Serververwalter                                                                         |
-| `/liga log season:…`           | Aktuelle Teilnehmerrolle, Ligaverwaltungsrolle oder Serververwalter                                               |
+| Aktion               | Freigabe                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `/report`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| `/suchen`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| Report bearbeiten    | Gespeicherte meldende Person mit aktueller Teilnehmerrolle oder Ligaverwaltungsrolle |
+| Report löschen       | Nur Ligaverwaltungsrolle                                                             |
+| `/report-entfernen`  | Nur Ligaverwaltungsrolle                                                             |
+| `/liga season`       | Nur Ligaverwaltungsrolle                                                             |
+| `/liga status`       | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| `/liga log season:…` | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
 
 Die andere am Match beteiligte Person bekommt dadurch keine Bearbeitungsrechte. Die Melder-ID wird bei der ersten Meldung gespeichert und bleibt bei Korrekturen erhalten. Ein erneut gemeldetes Duplikat überträgt diese Zuordnung nicht.
 
-Die Buttons sind für alle gleich sichtbar. Der Bot prüft die Rechte beim Öffnen und vor der endgültigen Änderung erneut. Vor dem Erstellen, Speichern bzw. Löschen lädt er die handelnde Person frisch; entzogene Rollen werden berücksichtigt. Die Verwaltungsfreigabe stammt ausschließlich aus den Rollen bzw. Serverrechten dieses Mitglieds; ältere Berechtigungen aus einem bereits geöffneten Formular werden nicht als Ersatz verwendet. Zusätzlich sind beim Bearbeiten und Löschen Kanal- und Verlaufszugriff erforderlich. Bei privaten Threads wird die aktuelle Mitgliedschaft oder `ManageThreads` geprüft. Veraltete Formulare und Bestätigungen werden abgewiesen.
+Die Buttons sind für alle gleich sichtbar. Beim Öffnen eines Modals prüft der Bot die mit der Interaktion übermittelten Rollen; beim Absenden und vor der endgültigen Änderung lädt er die handelnde Person frisch. Entzogene Rollen werden berücksichtigt. Verwaltungsaktionen erfordern ausschließlich die konfigurierte Ligaverwaltungsrolle; Discord-Serverrechte ersetzen diese Freigabe nicht. Suche, Suchvorschläge, Status und Logabruf prüfen die aktuellen Rollen ebenfalls. Für Reports, Suche, Bearbeiten und Löschen werden zusätzlich Kanal- und Verlaufszugriff frisch geprüft. Bei privaten Threads wird die aktuelle Mitgliedschaft oder `ManageThreads` anhand des frisch geladenen Mitglieds geprüft. Veraltete Formulare und Bestätigungen werden abgewiesen.
 
-`/liga` ist als Gruppe für Teilnehmer sichtbar, damit sie `log` verwenden können. Die Verwaltungs-Unterbefehle werden im Bot gesondert gesperrt. Discord-Integrationsregeln dürfen nicht die gesamte Gruppe ausschließlich auf Admins beschränken, wenn Teilnehmer das Protokoll abrufen sollen.
+`/liga` ist als Gruppe für Teilnehmer sichtbar, damit sie `status` und `log` verwenden können. Der Verwaltungs-Unterbefehl `season` wird im Bot gesondert gesperrt. Discord-Integrationsregeln dürfen nicht die gesamte Gruppe ausschließlich auf Admins beschränken, wenn Teilnehmer Status und Protokoll abrufen sollen.
 
 ## Befehle und Bedienung
 
@@ -182,7 +183,7 @@ Treffer kommen als normale DMs. Gesperrte DMs oder teilweise fehlgeschlagener Ve
 /liga log season:4
 ```
 
-**Die Season ist verpflichtend.** Es gibt keinen Standardabruf aller Seasons. Alle aktuellen Teilnehmer sowie Verwaltung und Serververwalter dürfen das Protokoll dieser Season anfordern; ihre Rollen werden erneut geladen.
+**Die Season ist verpflichtend.** Es gibt keinen Standardabruf aller Seasons. Alle aktuellen Teilnehmer sowie die Ligaverwaltung dürfen das Protokoll dieser Season anfordern; ihre Rollen werden erneut geladen.
 
 Die DM enthält eine `.txt`-Datei mit Erstellungen, Änderungen, Löschungen und gegebenenfalls der JSON-Übernahme. Einträge zeigen Person/Discord-ID, Datum/Uhrzeit in `Europe/Berlin`, Report-/Nachrichten-ID und Vorher-/Nachher-Werte. Größere Exporte werden in vollständige UTF-8-Dateien aufgeteilt. Eingaben mit Zeilenumbrüchen werden escaped, damit sie keine zusätzlichen Logzeilen vortäuschen.
 

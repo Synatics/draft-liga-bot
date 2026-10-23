@@ -236,9 +236,7 @@ function createSeasonSetup({ settingsStore, managerRoleId, now = Date.now }) {
   const sessions = new Map();
   function authorize(interaction, member = interaction.member) {
     if (!isLeagueManager(interaction, managerRoleId, member))
-      throw new LeagueSettingsError(
-        "Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle oder „Server verwalten“.",
-      );
+      throw new LeagueSettingsError("Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle.");
   }
   function active(session) {
     if (sessions.get(session.id) !== session || session.expiresAt <= now()) {

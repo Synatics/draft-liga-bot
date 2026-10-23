@@ -4,7 +4,7 @@ const {
   MessageFlags,
 } = require("discord.js");
 const { LeagueSettingsError } = require("./league-settings");
-const { isLeagueManager, currentMember } = require("./permissions");
+const { isLeagueManager, isLeagueMember, currentMember } = require("./permissions");
 const { handleAuditCommand } = require("./audit-commands");
 const { roundLabel } = require("./season-rounds");
 
@@ -44,16 +44,18 @@ const leagueCommand = {
 async function handleLeagueCommand(interaction, settingsStore, database, config = {}, seasonSetup) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "log") return handleAuditCommand(interaction, database, config);
-  if (!isLeagueManager(interaction, config.managerRoleId)) {
-    throw new LeagueSettingsError(
-      "Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle oder „Server verwalten“.",
-    );
+  if (subcommand === "season") {
+    if (!isLeagueManager(interaction, config.managerRoleId))
+      throw new LeagueSettingsError("Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle.");
+    return seasonSetup.open(interaction);
   }
-  if (subcommand === "season") return seasonSetup.open(interaction);
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
   const member = await currentMember(interaction);
-  if (!isLeagueManager(interaction, config.managerRoleId, member))
-    throw new LeagueSettingsError("Du darfst die Liga nicht mehr verwalten.");
+  if (!isLeagueMember(interaction, config.participantRoleId, config.managerRoleId, member)) {
+    throw new LeagueSettingsError(
+      "Nur Teilnehmer und die Ligaverwaltung dürfen den Seasonplan ansehen.",
+    );
+  }
   let settings;
   if (subcommand === "spieltag") {
     throw new LeagueSettingsError(
@@ -66,7 +68,7 @@ async function handleLeagueCommand(interaction, settingsStore, database, config 
   }
   const schedule = settings.startDate
     ? `Start: ${settings.startDate.split("-").reverse().join(".")} · Wochenwechsel: Montag, 00:00 Uhr deutscher Zeit.`
-    : "Die Wochenautomatik ist noch nicht eingerichtet. Bitte /liga season mit startdatum ausführen.";
+    : "Die Wochenautomatik ist noch nicht eingerichtet. Bitte die Ligaverwaltung das Startdatum über /liga season einstellen lassen.";
   await interaction.editReply({
     content: settings.rounds
       ? `Season ${settings.season} · ${roundLabel(settings.currentRound)}${settings.status === "upcoming" ? " · noch nicht gestartet" : settings.status === "finished" ? " · Season beendet" : ""}\nWoche ${Math.max(1, Math.min(settings.week, settings.rounds.length))} von ${settings.rounds.length} · ${settings.matchdays} reguläre Spieltage\n${settings.status === "redraft" ? `Nächste Woche: ${roundLabel(settings.nextRound)}\n` : ""}${schedule}`

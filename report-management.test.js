@@ -33,7 +33,8 @@ const JAN = "200000000000000001",
   OTHER = "200000000000000003";
 const ADMIN = "200000000000000004";
 const BOT = "600000000000000001",
-  ROLE = "100000000000000001";
+  ROLE = "100000000000000001",
+  MANAGER = "100000000000000002";
 const permissions = (...extras) =>
   new PermissionsBitField([P.ViewChannel, P.ReadMessageHistory, ...extras]);
 
@@ -121,8 +122,8 @@ function setup(t) {
     id: ADMIN,
     displayName: "Admin",
     user: { bot: false },
-    roles: { cache: new Collection() },
-    permissions: permissions(P.ManageGuild),
+    roles: { cache: new Collection([[MANAGER, {}]]) },
+    permissions: permissions(),
   });
   const guild = {
     id: GUILD,
@@ -268,7 +269,7 @@ const addPublished = (
 
 async function openCorrection(f) {
   const command = f.interaction();
-  await openManagement(command, f.store, f.manager, ROLE, f.settings);
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
   return command;
 }
 
@@ -289,6 +290,7 @@ test("historical corrections keep the original season and offer all 25 days with
     f.manager,
     ROLE,
     f.settings,
+    MANAGER,
   );
   assert.equal(f.current().season, 3);
   assert.equal(f.current().matchday, 25);
@@ -322,6 +324,7 @@ test("submitting a correction rechecks the currently configured day limit", asyn
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /Spieltag gehört nicht/,
   );
@@ -525,7 +528,7 @@ test("only the reporter and management can edit; being the other match participa
   const f = setup(t);
   for (const id of [JAN]) {
     const command = f.interaction({ user: { id } });
-    await openManagement(command, f.store, f.manager, ROLE);
+    await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
     assert.ok(command.modal);
   }
   for (const id of [MAX, OTHER])
@@ -535,15 +538,17 @@ test("only the reporter and management can edit; being the other match participa
         f.store,
         f.manager,
         ROLE,
+        f.settings,
+        MANAGER,
       ),
       /Nur die meldende/,
     );
   const admin = f.admin();
-  await openManagement(admin, f.store, f.manager, ROLE);
+  await openManagement(admin, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.ok(admin.modal);
   f.message.author.id = OTHER;
   await assert.rejects(
-    openManagement(f.interaction(), f.store, f.manager, ROLE),
+    openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings, MANAGER),
     /Ergebnispost dieses Bots/,
   );
 });
@@ -593,8 +598,8 @@ test("a reporter cannot delete through either the public button, a forged confir
   ]) {
     await assert.rejects(
       interaction.commandName === "report-entfernen"
-        ? openManagement(interaction, f.store, f.manager, ROLE, f.settings)
-        : handleManagementComponent(interaction, f.store, f.manager, ROLE, f.settings),
+        ? openManagement(interaction, f.store, f.manager, ROLE, f.settings, MANAGER)
+        : handleManagementComponent(interaction, f.store, f.manager, ROLE, f.settings, MANAGER),
       /Nur die Ligaverwaltung/,
     );
   }
@@ -610,7 +615,7 @@ test("removing a reporter's participant role blocks both opening and submitting 
   };
   f.members.get(JAN).roles.cache.delete(ROLE);
   await assert.rejects(
-    openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings),
+    openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings, MANAGER),
     /aktueller Teilnehmerrolle/,
   );
   await assert.rejects(
@@ -620,6 +625,7 @@ test("removing a reporter's participant role blocks both opening and submitting 
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /aktueller Teilnehmerrolle/,
   );
@@ -627,21 +633,22 @@ test("removing a reporter's participant role blocks both opening and submitting 
   assert.equal(f.current().change, undefined);
 });
 
-test("stale administrative permissions cannot let a participant confirm a deletion", async (t) => {
+test("server permissions cannot replace a revoked management role at deletion confirmation", async (t) => {
   const f = setup(t);
   const reporter = f.members.get(JAN);
   reporter.permissions = permissions(P.ManageGuild);
+  reporter.roles.cache.set(MANAGER, {});
   const command = f.interaction({ customId: `report:delete:${f.record.id}` });
-  await openManagement(command, f.store, f.manager, ROLE, f.settings);
-  const staleMember = { ...reporter };
-  reporter.permissions = undefined;
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
+  const staleMember = { ...reporter, roles: { cache: new Collection(reporter.roles.cache) } };
+  reporter.roles.cache.delete(MANAGER);
   const confirmation = f.interaction({
     member: staleMember,
     memberPermissions: permissions(P.ManageGuild),
     customId: rows(command.response)[0][0].custom_id,
   });
   await assert.rejects(
-    handleManagementComponent(confirmation, f.store, f.manager, ROLE, f.settings),
+    handleManagementComponent(confirmation, f.store, f.manager, ROLE, f.settings, MANAGER),
     /Nur die Ligaverwaltung/,
   );
   assert.equal(f.deletions.length, 0);
@@ -652,11 +659,11 @@ test("legacy reports with unknown reporters require management, and buttons must
   const f = setup(t);
   f.store.save([{ ...f.current(), reporter: undefined }]);
   await assert.rejects(
-    openManagement(f.interaction(), f.store, f.manager, ROLE),
+    openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings, MANAGER),
     /meldende Person/,
   );
   const admin = f.admin();
-  await openManagement(admin, f.store, f.manager, ROLE);
+  await openManagement(admin, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.ok(admin.modal);
   await assert.rejects(
     openManagement(
@@ -664,11 +671,16 @@ test("legacy reports with unknown reporters require management, and buttons must
       f.store,
       f.manager,
       ROLE,
+      f.settings,
+      MANAGER,
     ),
     /anderen Report/,
   );
   f.message.webhookId = "700000000000000001";
-  await assert.rejects(openManagement(f.admin(), f.store, f.manager, ROLE), /dieses Bots/);
+  await assert.rejects(
+    openManagement(f.admin(), f.store, f.manager, ROLE, f.settings, MANAGER),
+    /dieses Bots/,
+  );
 });
 
 test("known older posts receive persistent buttons once; missing posts remain available for archive cleanup", async (t) => {
@@ -697,7 +709,7 @@ test("correction submission preserves the season and updates day, players, score
     customId: command.modal.custom_id,
     fields: f.fields({ season: "5", matchday: "3", winner: OTHER, score: "1-0 || @everyone" }),
   });
-  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.ok(submit.defer.flags.includes(MessageFlags.Ephemeral));
   assert.match(submit.response.content, /korrigiert/);
   assert.equal(f.current().season, 4);
@@ -715,7 +727,7 @@ test("changing day 1 to day 2 while swapping the winner updates the same post, d
     customId: command.modal.custom_id,
     fields: f.fields({ matchday: "2", winner: MAX, loser: JAN, score: "2-0", link: f.data.link }),
   });
-  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.equal(submit.deferred, true);
   assert.ok(submit.defer.flags.includes(MessageFlags.Ephemeral));
   assert.match(submit.response.content, /Season 4 · Spieltag 2/);
@@ -737,7 +749,7 @@ test("changing day 1 to day 2 while swapping the winner updates the same post, d
     },
     options: { getInteger: (name) => (name === "season" ? 4 : null), getString: () => JAN },
   });
-  await handleSearchCommand(search, restarted);
+  await handleSearchCommand(search, restarted, { participantRoleId: ROLE, managerRoleId: MANAGER });
   assert.match(dms[0].content, /Spieltag 2/);
   assert.ok(!dms[0].content.includes("Spieltag 1"));
   const reopened = await openCorrection(f);
@@ -760,7 +772,7 @@ test("historical participants remain selectable without the role; newly selected
     MAX,
   );
   const submit = f.interaction({ customId: command.modal.custom_id, fields: f.fields() });
-  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(submit, f.store, f.manager, ROLE, f.settings, MANAGER);
   const fresh = await openCorrection(f);
   f.members.get(OTHER).roles.cache.clear();
   await assert.rejects(
@@ -770,6 +782,7 @@ test("historical participants remain selectable without the role; newly selected
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /Teilnehmerrolle/,
   );
@@ -814,6 +827,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
         f.manager,
         ROLE,
         f.settings,
+        MANAGER,
       ),
     );
   }
@@ -837,6 +851,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
         f.manager,
         ROLE,
         f.settings,
+        MANAGER,
       ),
     );
   }
@@ -847,6 +862,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /anderen Person/,
   );
@@ -858,6 +874,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /inzwischen geändert/,
   );
@@ -869,6 +886,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /Nur die meldende/,
   );
@@ -878,16 +896,16 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
 test("deletion requires a private confirmation; canceling leaves the post and search untouched", async (t) => {
   const f = setup(t);
   const command = f.admin({ customId: `report:delete:${f.record.id}` });
-  await openManagement(command, f.store, f.manager, ROLE);
-  assert.ok(command.response.flags.includes(MessageFlags.Ephemeral));
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
+  assert.ok(command.defer.flags.includes(MessageFlags.Ephemeral));
   assert.equal(f.deletions.length, 0);
   const buttons = command.response.components[0].toJSON().components;
   const cancel = f.admin({ customId: buttons[1].custom_id });
-  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(cancel.response.content, /abgebrochen/);
   assert.equal(f.store.list(GUILD).length, 1);
   const confirm = f.admin({ customId: buttons[0].custom_id });
-  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(confirm.response.content, /entfernt/);
   assert.equal(f.isDeleted(), true);
   assert.equal(f.store.list(GUILD).length, 0);
@@ -900,7 +918,7 @@ test("the slash fallback finds a deleted post by season and player and removes i
     commandName: "report-entfernen",
     options: removalOptions({ name: "jan", matchday: 1 }),
   });
-  await openManagement(command, f.store, f.manager, ROLE);
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.ok(command.defer.flags.includes(MessageFlags.Ephemeral));
   assert.match(command.response.content, /Season 4 · Spieltag 1 · Jan vs\. Max/);
   assert.ok(command.response.content.includes(f.data.link));
@@ -909,7 +927,7 @@ test("the slash fallback finds a deleted post by season and player and removes i
   const confirm = f.admin({
     customId: command.response.components[0].toJSON().components[0].custom_id,
   });
-  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.equal(f.store.list(GUILD).length, 0);
   assert.equal(f.deletions.length, 0);
   const slash = managementCommands.find((entry) => entry.name === "report-entfernen");
@@ -925,7 +943,7 @@ test("multiple removal matches require selecting exactly one report and confirmi
   const second = addPublished(f, { matchday: 2, link: "https://example.org/second" });
   addPublished(f, { season: 5 }, "500000000000000003");
   const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
-  await openManagement(command, f.store, f.manager, ROLE);
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
   const options = rows(command.response)[0][0].options;
   assert.equal(options.length, 2);
   assert.match(options[1].label, /Spieltag 2 · Jan vs\. Max/);
@@ -935,18 +953,18 @@ test("multiple removal matches require selecting exactly one report and confirmi
     customId: rows(command.response)[0][0].custom_id,
     values: [options[0].value],
   });
-  await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(select, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(select.response.content, /wirklich löschen/);
   assert.equal(f.deletions.length, 0);
   const confirm = f.admin({ customId: rows(select.response)[0][0].custom_id });
-  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(confirm, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.equal(f.deletions.length, 1);
   assert.equal(f.store.list(GUILD).length, 2);
   const specific = f.admin({
     commandName: "report-entfernen",
     options: removalOptions({ matchday: 2 }),
   });
-  await openManagement(specific, f.store, f.manager, ROLE);
+  await openManagement(specific, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.ok(specific.response.content.includes(second.link));
   assert.match(specific.response.content, /wirklich löschen/);
 });
@@ -960,18 +978,18 @@ test("removal pages include every match and canceling never deletes anything", a
       String(BigInt(MESSAGE) + BigInt(index)),
     );
   const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
-  await openManagement(command, f.store, f.manager, ROLE);
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(command.response.content, /27 Treffer · Seite 1 von 2/);
   const firstPage = rows(command.response)[0][0].options;
   assert.equal(firstPage.length, 25);
   const next = f.admin({ customId: rows(command.response)[1][1].custom_id });
-  await handleManagementComponent(next, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(next, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(next.response.content, /Seite 2 von 2/);
   const secondPage = rows(next.response)[0][0].options;
   assert.equal(secondPage.length, 2);
   assert.equal(new Set([...firstPage, ...secondPage].map((option) => option.value)).size, 27);
   const cancel = f.admin({ customId: rows(next.response)[1][2].custom_id });
-  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings);
+  await handleManagementComponent(cancel, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.deepEqual(cancel.response.components, []);
   assert.equal(f.deletions.length, 0);
   assert.equal(f.store.list(GUILD).length, 27);
@@ -1029,7 +1047,7 @@ test("removal requires management and never exposes other servers or inaccessibl
       this.choices = choices;
     },
   });
-  await handleRemovalAutocomplete(autocomplete, f.store);
+  await handleRemovalAutocomplete(autocomplete, f.store, MANAGER);
   assert.deepEqual(
     autocomplete.choices.map((choice) => choice.name),
     ["Jan", "Lennart", "Max"],
@@ -1038,13 +1056,16 @@ test("removal requires management and never exposes other servers or inaccessibl
     commandName: "report-entfernen",
     options: removalOptions({ name: OTHER }),
   });
-  await assert.rejects(openManagement(command, f.store, f.manager, ROLE), /Nur die Ligaverwaltung/);
+  await assert.rejects(
+    openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER),
+    /Nur die Ligaverwaltung/,
+  );
   const admin = f.admin({
     commandName: "report-entfernen",
     memberPermissions: permissions(P.ManageGuild),
     options: removalOptions({ name: OTHER }),
   });
-  await openManagement(admin, f.store, f.manager, ROLE);
+  await openManagement(admin, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.match(admin.response.content, /Lennart/);
   assert.equal(f.deletions.length, 0);
 });
@@ -1053,7 +1074,7 @@ test("removal choices reject stale records, foreign users, revoked access and in
   const f = setup(t);
   addPublished(f, { matchday: 2 });
   const command = f.admin({ commandName: "report-entfernen", options: removalOptions() });
-  await openManagement(command, f.store, f.manager, ROLE);
+  await openManagement(command, f.store, f.manager, ROLE, f.settings, MANAGER);
   const customId = rows(command.response)[0][0].custom_id;
   const values = [rows(command.response)[0][0].options[0].value];
   await assert.rejects(
@@ -1063,18 +1084,33 @@ test("removal choices reject stale records, foreign users, revoked access and in
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /anderen Person/,
   );
   f.channel.permissionsFor = () => new PermissionsBitField([]);
   await assert.rejects(
-    handleManagementComponent(f.admin({ customId, values }), f.store, f.manager, ROLE, f.settings),
+    handleManagementComponent(
+      f.admin({ customId, values }),
+      f.store,
+      f.manager,
+      ROLE,
+      f.settings,
+      MANAGER,
+    ),
     /keinen Zugriff/,
   );
   f.channel.permissionsFor = () => permissions();
   f.store.save(f.store.list(GUILD).map((match) => ({ ...match, revision: 1 })));
   await assert.rejects(
-    handleManagementComponent(f.admin({ customId, values }), f.store, f.manager, ROLE, f.settings),
+    handleManagementComponent(
+      f.admin({ customId, values }),
+      f.store,
+      f.manager,
+      ROLE,
+      f.settings,
+      MANAGER,
+    ),
     /inzwischen geändert/,
   );
   for (const filters of [{ season: 0 }, { season: 10000 }, { matchday: 26 }]) {
@@ -1084,6 +1120,8 @@ test("removal choices reject stale records, foreign users, revoked access and in
         f.store,
         f.manager,
         ROLE,
+        f.settings,
+        MANAGER,
       ),
       /Season von/,
     );
@@ -1107,7 +1145,7 @@ test("removal suggestions retain historical names and require explicit selection
       this.choices = choices;
     },
   });
-  await handleRemovalAutocomplete(autocomplete, f.store);
+  await handleRemovalAutocomplete(autocomplete, f.store, MANAGER);
   assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);
   f.store.save(
     f.store.list(GUILD).map((match) => ({
@@ -1121,6 +1159,8 @@ test("removal suggestions retain historical names and require explicit selection
       f.store,
       f.manager,
       ROLE,
+      f.settings,
+      MANAGER,
     ),
     /Mehrere Teilnehmer/,
   );
@@ -1128,7 +1168,7 @@ test("removal suggestions retain historical names and require explicit selection
     commandName: "report-entfernen",
     options: removalOptions({ name: MAX }),
   });
-  await openManagement(selected, f.store, f.manager, ROLE);
+  await openManagement(selected, f.store, f.manager, ROLE, f.settings, MANAGER);
   assert.equal(rows(selected.response)[0][0].options.length, 2);
 });
 
@@ -1146,6 +1186,7 @@ test("a fresh private-thread membership check rejects removed members even if th
       f.manager,
       ROLE,
       f.settings,
+      MANAGER,
     ),
     /privaten Thread/,
   );
@@ -1158,6 +1199,7 @@ test("a fresh private-thread membership check rejects removed members even if th
     f.manager,
     ROLE,
     f.settings,
+    MANAGER,
   );
   assert.equal(f.edits.length, 1, "Channel loading is not limited to the cache");
 });
@@ -1199,8 +1241,107 @@ test("opening correction cannot accidentally execute a previously pending deleti
   const f = setup(t);
   f.store.beginChange(f.record.id, GUILD, revisionOf(f.current()), { kind: "delete" });
   await assert.rejects(
-    openManagement(f.interaction(), f.store, f.manager, ROLE),
+    openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings, MANAGER),
     /Löschung vorgemerkt/,
   );
+  assert.equal(f.deletions.length, 0);
+});
+
+test("administrators without the management role cannot edit other reports, delete or inspect removal choices", async (t) => {
+  const f = setup(t);
+  const member = f.members.get(ADMIN);
+  member.roles.cache.clear();
+  for (const permission of [P.ManageGuild, P.Administrator]) {
+    member.permissions = permissions(permission);
+    for (const customId of [
+      `report:edit:${f.record.id}`,
+      `report:delete:${f.record.id}`,
+      `manage:delete:${f.record.id}:${revisionOf(f.current())}:${ADMIN}`,
+    ]) {
+      await assert.rejects(
+        handleManagementComponent(
+          f.admin({ customId }),
+          f.store,
+          f.manager,
+          ROLE,
+          f.settings,
+          MANAGER,
+        ),
+        /Nur die/,
+      );
+    }
+    await assert.rejects(
+      openManagement(
+        f.admin({ commandName: "report-entfernen", options: removalOptions() }),
+        f.store,
+        f.manager,
+        ROLE,
+        f.settings,
+        MANAGER,
+      ),
+      /Nur die Ligaverwaltung/,
+    );
+    const autocomplete = f.admin({
+      options: removalOptions({ name: "" }),
+      async respond(choices) {
+        this.choices = choices;
+      },
+    });
+    await handleRemovalAutocomplete(autocomplete, f.store, MANAGER);
+    assert.deepEqual(autocomplete.choices, []);
+  }
+  assert.equal(f.edits.length, 0);
+  assert.equal(f.deletions.length, 0);
+  assert.equal(f.current().change, undefined);
+});
+
+test("revoked ManageThreads cannot bypass current thread membership during edits, retries or deletion", async (t) => {
+  const f = setup(t);
+  const command = await openCorrection(f);
+  const removal = f.admin({ customId: `report:delete:${f.record.id}` });
+  await openManagement(removal, f.store, f.manager, ROLE, f.settings, MANAGER);
+  f.channel.type = ChannelType.PrivateThread;
+  f.channel.permissionsFor = (member) =>
+    permissions(...(member.permissions?.has(P.ManageThreads) ? [P.ManageThreads] : []));
+  f.channel.members.fetch = async ({ force }) => {
+    assert.equal(force, true);
+    throw Object.assign(new Error("Not a thread member"), { code: 10007 });
+  };
+  const stale = (id) => ({ ...f.members.get(id), permissions: permissions(P.ManageThreads) });
+  await assert.rejects(
+    handleManagementComponent(
+      f.interaction({ member: stale(JAN), customId: command.modal.custom_id, fields: f.fields() }),
+      f.store,
+      f.manager,
+      ROLE,
+      f.settings,
+      MANAGER,
+    ),
+    /privaten Thread/,
+  );
+  await assert.rejects(
+    handleManagementComponent(
+      f.admin({ member: stale(ADMIN), customId: rows(removal.response)[0][0].custom_id }),
+      f.store,
+      f.manager,
+      ROLE,
+      f.settings,
+      MANAGER,
+    ),
+    /privaten Thread/,
+  );
+  f.store.beginChange(f.record.id, GUILD, revisionOf(f.current()), f.change());
+  await assert.rejects(
+    openManagement(
+      f.interaction({ member: stale(JAN) }),
+      f.store,
+      f.manager,
+      ROLE,
+      f.settings,
+      MANAGER,
+    ),
+    /privaten Thread/,
+  );
+  assert.equal(f.edits.length, 0);
   assert.equal(f.deletions.length, 0);
 });

@@ -18,6 +18,9 @@ const JAN = "200000000000000001";
 const MAX = "200000000000000002";
 const CHANNEL = "400000000000000001";
 const GUILD = "300000000000000001";
+const ROLE = "100000000000000001";
+const MANAGER = "100000000000000002";
+const config = { participantRoleId: ROLE, managerRoleId: MANAGER };
 const match = (overrides = {}) => ({
   guildId: GUILD,
   channelId: CHANNEL,
@@ -36,14 +39,31 @@ const storeWith = (matches) => ({
 
 function interaction({ season = 4, name = JAN, matchday = null } = {}) {
   const dms = [];
+  const member = {
+    id: JAN,
+    roles: { cache: new Collection([[ROLE, {}]]) },
+    permissions: new PermissionsBitField(),
+  };
   return {
     guild: {
       id: GUILD,
+      members: {
+        async fetch({ user, force }) {
+          assert.equal(user, JAN);
+          assert.equal(force, true);
+          return member;
+        },
+      },
       channels: {
+        async fetch(id, { force }) {
+          assert.equal(force, true);
+          return this.cache.get(id);
+        },
         cache: new Collection([
           [
             CHANNEL,
             {
+              guildId: GUILD,
               permissionsFor: () =>
                 new PermissionsBitField([
                   PermissionFlagsBits.ViewChannel,
@@ -54,7 +74,7 @@ function interaction({ season = 4, name = JAN, matchday = null } = {}) {
         ]),
       },
     },
-    member: {},
+    member,
     user: {
       id: JAN,
       async send(payload) {
@@ -88,7 +108,7 @@ test("search filters by season, player ID and optional matchday and sends the sa
   });
   const store = storeWith([first, second, match({ season: 5 }), unrelated]);
   const all = interaction();
-  await handleSearchCommand(all, store);
+  await handleSearchCommand(all, store, config);
   assert.ok(all.defer.flags.includes(MessageFlags.Ephemeral));
   assert.equal(all.sent.length, 1);
   assert.equal(all.dms.length, 1);
@@ -99,7 +119,7 @@ test("search filters by season, player ID and optional matchday and sends the sa
   assert.deepEqual(all.dms[0].allowedMentions, { parse: [] });
   assert.equal(all.sent[0].content, "Ich habe dir 2 Replays per DM geschickt.");
   const specific = interaction({ name: "jan", matchday: 2 });
-  await handleSearchCommand(specific, store);
+  await handleSearchCommand(specific, store, config);
   assert.equal(specific.dms[0].content, `**Spieltag 2 · Jan vs. Max**\n<${second.link}>`);
   assert.equal(specific.sent[0].content, "Ich habe dir 1 Replay per DM geschickt.");
 });
@@ -111,10 +131,10 @@ test("search suggests archived participants without a role and resolves old name
   });
   const store = storeWith([match(), renamed]);
   const autocomplete = interaction({ name: "ja" });
-  await handleSearchAutocomplete(autocomplete, store);
+  await handleSearchAutocomplete(autocomplete, store, config);
   assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);
   const byOldName = interaction({ name: "JAN" });
-  await handleSearchCommand(byOldName, store);
+  await handleSearchCommand(byOldName, store, config);
   assert.match(byOldName.dms[0].content, /Roran321/);
   assert.match(byOldName.dms[0].content, /Jan/);
 });
@@ -133,11 +153,11 @@ test("duplicate names offer distinct choices and require selection rather than g
     [JAN, MAX],
   );
   await assert.rejects(
-    handleSearchCommand(interaction({ name: "Max" }), storeWith([sameName])),
+    handleSearchCommand(interaction({ name: "Max" }), storeWith([sameName]), config),
     /Mehrere Teilnehmer/,
   );
   const selected = interaction({ name: MAX });
-  await handleSearchCommand(selected, storeWith([sameName]));
+  await handleSearchCommand(selected, storeWith([sameName]), config);
   assert.match(selected.dms[0].content, /Max vs\. Max/);
 });
 
@@ -151,24 +171,34 @@ test("search and suggestions never expose records from other servers, unreadable
   ]);
   const search = interaction();
   search.guild.channels.cache.set(privateChannel, {
+    guildId: GUILD,
     permissionsFor: () => new PermissionsBitField([PermissionFlagsBits.ViewChannel]),
   });
   search.guild.channels.cache.set(privateThread, {
+    guildId: GUILD,
     type: ChannelType.PrivateThread,
-    members: { cache: new Collection() },
+    members: {
+      cache: new Collection(),
+      async fetch({ member, force }) {
+        assert.equal(force, true);
+        if (!this.cache.has(member))
+          throw Object.assign(new Error("Not a member"), { code: 10007 });
+        return this.cache.get(member);
+      },
+    },
     permissionsFor: () =>
       new PermissionsBitField([
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.ReadMessageHistory,
       ]),
   });
-  await handleSearchCommand(search, store);
+  await handleSearchCommand(search, store, config);
   assert.match(search.sent[0].content, /Keine passenden Replays/);
   assert.equal(search.dms.length, 0);
-  await handleSearchAutocomplete(search, store);
+  await handleSearchAutocomplete(search, store, config);
   assert.deepEqual(search.choices, []);
   search.guild.channels.cache.get(privateThread).members.cache.set(JAN, {});
-  await handleSearchCommand(search, store);
+  await handleSearchCommand(search, store, config);
   assert.match(search.dms[0].content, /Jan vs\. Max/);
 });
 
@@ -177,7 +207,7 @@ test("large searches send every replay within Discord's message limit as normal 
     match({ matchday: index + 1, link: `https://example.org/${"a".repeat(900)}${index}` }),
   );
   const search = interaction();
-  await handleSearchCommand(search, storeWith(matches));
+  await handleSearchCommand(search, storeWith(matches), config);
   assert.ok(search.dms.length > 1);
   assert.ok(search.dms.every((message) => message.content.length <= 2000));
   assert.ok(search.dms.every((message) => !message.flags.includes(MessageFlags.Ephemeral)));
@@ -193,15 +223,15 @@ test("large searches send every replay within Discord's message limit as normal 
 test("search handles empty archives, unknown players and missing optional day without requiring an active season", async () => {
   for (const matches of [[], [match({ season: 3 })]]) {
     const search = interaction({ name: "Unbekannt" });
-    await handleSearchCommand(search, storeWith(matches));
+    await handleSearchCommand(search, storeWith(matches), config);
     assert.match(search.sent[0].content, /Keine passenden Replays/);
     assert.equal(search.dms.length, 0);
   }
   const missingSeason = interaction({ season: null, name: "Ja" });
-  await handleSearchAutocomplete(missingSeason, storeWith([match()]));
+  await handleSearchAutocomplete(missingSeason, storeWith([match()]), config);
   assert.deepEqual(missingSeason.choices, []);
   await assert.rejects(
-    handleSearchCommand(interaction({ season: 0 }), storeWith([])),
+    handleSearchCommand(interaction({ season: 0 }), storeWith([]), config),
     /Season zwischen/,
   );
 });
@@ -212,7 +242,7 @@ test("blocked DMs give private guidance without posting results or a false succe
     search.user.send = async () => {
       throw Object.assign(new Error("Cannot send messages"), { code });
     };
-    await handleSearchCommand(search, storeWith([match()]));
+    await handleSearchCommand(search, storeWith([match()]), config);
     assert.ok(search.defer.flags.includes(MessageFlags.Ephemeral));
     assert.equal(search.sent.length, 1);
     assert.match(search.sent[0].content, /Direktnachrichten von Servermitgliedern/);
@@ -233,7 +263,7 @@ test("a failure partway through DM delivery reports partial success and stops se
     if (++attempts === 2) throw new Error("Network unavailable");
     search.dms.push(payload);
   };
-  await handleSearchCommand(search, storeWith(matches));
+  await handleSearchCommand(search, storeWith(matches), config);
   assert.equal(attempts, 2);
   assert.equal(search.dms.length, 1);
   assert.equal(logged.length, 1);
@@ -247,4 +277,136 @@ test("Markdown and mentions in saved names cannot change the search result layou
     match({ players: [{ id: JAN, name: "Jan**\n@everyone" }, match().players[1]] }),
   ]);
   assert.ok(content.startsWith("**Spieltag 1 · Jan\\*\\* @everyone vs. Max**\n<https://"));
+});
+
+test("search and autocomplete require a current league role, including for administrators", async () => {
+  for (const [roles, permissions, allowed] of [
+    [[], [], false],
+    [[], [PermissionFlagsBits.ManageGuild], false],
+    [[], [PermissionFlagsBits.Administrator], false],
+    [[ROLE], [], true],
+    [[MANAGER], [], true],
+  ]) {
+    const search = interaction({ name: "Jan" });
+    search.member.roles.cache = new Collection(roles.map((id) => [id, {}]));
+    search.member.permissions = new PermissionsBitField(permissions);
+    search.memberPermissions = search.member.permissions;
+    const store = storeWith([match()]);
+    if (allowed) {
+      await handleSearchCommand(search, store, config);
+      assert.equal(search.dms.length, 1);
+    } else {
+      await assert.rejects(handleSearchCommand(search, store, config), /Nur Teilnehmer/);
+      assert.equal(search.dms.length, 0);
+    }
+    await handleSearchAutocomplete(search, store, config);
+    assert.equal(search.choices.length, allowed ? 1 : 0);
+  }
+});
+
+test("revoked search roles and failed member lookups never expose replay data or suggestions", async () => {
+  const search = interaction();
+  search.guild.members.fetch = async () => ({
+    ...search.member,
+    roles: { cache: new Collection() },
+    permissions: new PermissionsBitField([PermissionFlagsBits.Administrator]),
+  });
+  const store = storeWith([match()]);
+  await assert.rejects(handleSearchCommand(search, store, config), /Nur Teilnehmer/);
+  await handleSearchAutocomplete(search, store, config);
+  assert.deepEqual(search.choices, []);
+  search.guild.members.fetch = async () => {
+    throw Object.assign(new Error("Unknown Member"), { code: 10007 });
+  };
+  await assert.rejects(handleSearchCommand(search, store, config), /Unknown Member/);
+  assert.equal(search.dms.length, 0);
+});
+
+test("search fetches uncached channels and checks their server and current channel permissions", async () => {
+  const search = interaction();
+  const channel = search.guild.channels.cache.get(CHANNEL);
+  search.guild.channels.cache.clear();
+  search.guild.channels.fetch = async (id, { force }) => {
+    assert.equal(id, CHANNEL);
+    assert.equal(force, true);
+    return channel;
+  };
+  channel.permissionsFor = (member) => {
+    assert.equal(member, search.member);
+    return new PermissionsBitField([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.ReadMessageHistory,
+    ]);
+  };
+  const store = storeWith([match()]);
+  await handleSearchCommand(search, store, config);
+  assert.equal(search.dms.length, 1);
+  channel.guildId = "300000000000000002";
+  await handleSearchAutocomplete(search, store, config);
+  assert.deepEqual(search.choices, []);
+  channel.guildId = GUILD;
+  channel.permissionsFor = () => new PermissionsBitField();
+  await handleSearchCommand(search, store, config);
+  assert.equal(search.dms.length, 1);
+  await handleSearchAutocomplete(search, store, config);
+  assert.deepEqual(search.choices, []);
+});
+
+test("stale private-thread membership and revoked ManageThreads cannot expose search results", async () => {
+  const search = interaction();
+  const channel = search.guild.channels.cache.get(CHANNEL);
+  const current = { ...search.member, permissions: new PermissionsBitField() };
+  search.member.permissions = new PermissionsBitField([PermissionFlagsBits.ManageThreads]);
+  search.guild.members.fetch = async () => current;
+  channel.type = ChannelType.PrivateThread;
+  channel.permissionsFor = (member) =>
+    new PermissionsBitField([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.ReadMessageHistory,
+      ...(member.permissions.has(PermissionFlagsBits.ManageThreads)
+        ? [PermissionFlagsBits.ManageThreads]
+        : []),
+    ]);
+  let verified = 0;
+  channel.members = {
+    cache: new Collection([[JAN, {}]]),
+    async fetch({ member, force }) {
+      assert.equal(member, JAN);
+      assert.equal(force, true);
+      verified++;
+      throw Object.assign(new Error("No longer a thread member"), { code: 10007 });
+    },
+  };
+  const store = storeWith([match()]);
+  await handleSearchCommand(search, store, config);
+  await handleSearchAutocomplete(search, store, config);
+  assert.equal(verified, 2);
+  assert.equal(search.dms.length, 0);
+  assert.deepEqual(search.choices, []);
+});
+
+test("thread searches refresh the parent channel before evaluating inherited permissions", async () => {
+  const search = interaction();
+  const channel = search.guild.channels.cache.get(CHANNEL);
+  const parentId = "400000000000000002";
+  channel.isThread = () => true;
+  channel.parentId = parentId;
+  let readable = true;
+  channel.permissionsFor = () =>
+    new PermissionsBitField(
+      readable ? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] : [],
+    );
+  const fetches = [];
+  search.guild.channels.fetch = async (id, { force }) => {
+    assert.equal(force, true);
+    fetches.push(id);
+    if (id === parentId) {
+      readable = false;
+      return { guildId: GUILD };
+    }
+    return channel;
+  };
+  await handleSearchCommand(search, storeWith([match()]), config);
+  assert.deepEqual(fetches, [CHANNEL, parentId]);
+  assert.equal(search.dms.length, 0);
 });

@@ -5,7 +5,12 @@ const {
   PermissionFlagsBits: P,
 } = require("discord.js");
 const { LeagueSettingsError } = require("./league-settings");
-const { isParticipant, isLeagueManager, currentMember } = require("./permissions");
+const {
+  isParticipant,
+  isLeagueManager,
+  currentMember,
+  fetchCurrentChannel,
+} = require("./permissions");
 const { logError, interactionContext } = require("./diagnostics");
 const { seasonRoundLabel } = require("./season-rounds");
 
@@ -84,7 +89,7 @@ async function visibleEvents(interaction, events, member, managerRoleId) {
   await Promise.all(
     [...new Set(events.map((event) => event.channelId))].map(async (id) => {
       try {
-        const channel = await interaction.guild.channels.fetch(id);
+        const channel = await fetchCurrentChannel(interaction, id);
         if (!channel) {
           access.set(id, isLeagueManager(interaction, managerRoleId, member));
           return;
@@ -120,7 +125,7 @@ async function handleAuditCommand(interaction, database, config) {
     !isLeagueManager(interaction, config.managerRoleId, member)
   ) {
     throw new LeagueSettingsError(
-      "Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen das Protokoll anfordern.",
+      "Nur Teilnehmer und die Ligaverwaltung dürfen das Protokoll anfordern.",
     );
   }
   const events = await visibleEvents(

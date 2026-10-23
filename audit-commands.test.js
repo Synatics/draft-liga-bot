@@ -118,8 +118,8 @@ function setup({
   return { member, channel, interaction, dms, database, queries: () => queries };
 }
 
-test("participants, managers and server administrators receive only their selected season as a persistent DM attachment", async () => {
-  for (const access of [{ roles: [ROLE] }, { roles: [MANAGER] }, { roles: [], admin: true }]) {
+test("participants and managers receive only their selected season as a persistent DM attachment", async () => {
+  for (const access of [{ roles: [ROLE] }, { roles: [MANAGER] }]) {
     const f = setup({
       ...access,
       events: [
@@ -163,6 +163,13 @@ test("the current role is checked and nonparticipants cannot retrieve logs or co
   const f = setup({ roles: [] });
   await assert.rejects(handleAuditCommand(f.interaction, f.database, config), /Nur Teilnehmer/);
   assert.equal(f.dms.length, 0);
+  const administrator = setup({ roles: [], admin: true });
+  await assert.rejects(
+    handleAuditCommand(administrator.interaction, administrator.database, config),
+    /Nur Teilnehmer/,
+  );
+  assert.equal(administrator.queries(), 0);
+  assert.equal(administrator.dms.length, 0);
   const participant = setup();
   participant.interaction.options.getSubcommand = () => "season";
   await assert.rejects(
@@ -211,9 +218,43 @@ test("a manager role reads league status without ManageGuild, but a revoked role
   });
   await assert.rejects(
     handleLeagueCommand(f.interaction, settings, f.database, config),
-    /nicht mehr verwalten/,
+    /Nur Teilnehmer/,
   );
   assert.equal(saved, 1);
+});
+
+test("participants can read status, but only the management role may open season setup", async () => {
+  for (const [roles, admin, status, season] of [
+    [[], false, false, false],
+    [[], true, false, false],
+    [[ROLE], false, true, false],
+    [[ROLE], true, true, false],
+    [[MANAGER], false, true, true],
+  ]) {
+    const f = setup({ roles, admin });
+    let reads = 0;
+    const settings = {
+      get() {
+        reads++;
+        return { season: 4, currentMatchday: 1, matchdays: 9 };
+      },
+    };
+    f.interaction.options.getSubcommand = () => "status";
+    const read = handleLeagueCommand(f.interaction, settings, f.database, config);
+    if (status) await read;
+    else await assert.rejects(read, /Nur Teilnehmer/);
+    assert.equal(reads, status ? 1 : 0);
+    let opened = 0;
+    f.interaction.options.getSubcommand = () => "season";
+    const create = handleLeagueCommand(f.interaction, settings, f.database, config, {
+      async open() {
+        opened++;
+      },
+    });
+    if (season) await create;
+    else await assert.rejects(create, /Ligaverwaltungsrolle/);
+    assert.equal(opened, season ? 1 : 0);
+  }
 });
 
 test("blocked DMs and empty seasons produce private guidance without leaking the log in the server", async () => {
@@ -239,8 +280,29 @@ test("private thread membership is verified afresh rather than trusting a stale 
 });
 
 test("a channel from a different guild never authorizes an audit export", async () => {
+  for (const roles of [[ROLE], [MANAGER]]) {
+    const f = setup({ roles });
+    f.channel.guildId = "300000000000000002";
+    await handleAuditCommand(f.interaction, f.database, config);
+    assert.equal(f.dms.length, 0);
+  }
+});
+
+test("thread audit exports refresh parent permissions and deny an inaccessible thread", async () => {
   const f = setup();
-  f.channel.guildId = "300000000000000002";
+  f.channel.isThread = () => true;
+  f.channel.parentId = "400000000000000002";
+  let readable = true;
+  f.channel.permissionsFor = () =>
+    new PermissionsBitField(readable ? [P.ViewChannel, P.ReadMessageHistory] : []);
+  f.interaction.guild.channels.fetch = async (id, { force }) => {
+    assert.equal(force, true);
+    if (id === f.channel.parentId) {
+      readable = false;
+      return { guildId: GUILD };
+    }
+    return f.channel;
+  };
   await handleAuditCommand(f.interaction, f.database, config);
   assert.equal(f.dms.length, 0);
 });

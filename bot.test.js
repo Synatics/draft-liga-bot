@@ -253,6 +253,7 @@ test("two exported bot instances retain separate clients, settings and interacti
     const member = {
       id: USER,
       permissions: new PermissionsBitField([PermissionFlagsBits.ManageGuild]),
+      roles: { cache: new Collection([[ROLE, {}]]) },
     };
     return {
       user: { id: USER },

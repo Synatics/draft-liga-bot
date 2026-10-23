@@ -111,11 +111,11 @@ function createInteractionHandler({
         return;
       }
       if (isSearchAutocomplete) {
-        await handleSearchAutocomplete(interaction, matchStore);
+        await handleSearchAutocomplete(interaction, matchStore, config);
         return;
       }
       if (isSearchCommand) {
-        await handleSearchCommand(interaction, matchStore);
+        await handleSearchCommand(interaction, matchStore, config);
         return;
       }
       if (isLeagueCommand) {

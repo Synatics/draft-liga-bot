@@ -18,7 +18,13 @@ const { matchData, normalizeReplayLink, revisionOf } = require("./match-store");
 const { createResultMessage, validateScore } = require("./reports");
 const { ReportManagementError } = require("./report-manager");
 const { playerChoices, resolvePlayer } = require("./search-commands");
-const { isParticipant, isLeagueManager, currentMember, actorOf } = require("./permissions");
+const {
+  isParticipant,
+  isLeagueManager,
+  currentMember,
+  fetchReadableChannel,
+  actorOf,
+} = require("./permissions");
 const { causedError } = require("./diagnostics");
 const {
   playableRounds,
@@ -132,25 +138,19 @@ function authorize(interaction, record, action, roleId, managerRoleId, member) {
   if (!canManage(interaction, record, action, roleId, managerRoleId, member)) {
     throw new ReportManagementError(
       action === "edit"
-        ? "Nur die meldende Person mit aktueller Teilnehmerrolle, die Ligaverwaltung und Serververwalter dürfen diesen Report bearbeiten. Bei älteren Reports ist die meldende Person eventuell unbekannt."
-        : "Nur die Ligaverwaltung und Serververwalter dürfen Reports löschen oder das Archiv bereinigen.",
+        ? "Nur die meldende Person mit aktueller Teilnehmerrolle und die Ligaverwaltung dürfen diesen Report bearbeiten. Bei älteren Reports ist die meldende Person eventuell unbekannt."
+        : "Nur die Ligaverwaltung darf Reports löschen oder das Archiv bereinigen.",
     );
   }
 }
 
-function checkChannelAccess(
-  interaction,
-  channel,
-  privateMemberVerified = false,
-  member = interaction.member,
-) {
-  const permissions = channel?.permissionsFor(member);
+function checkChannelAccess(interaction, channel) {
+  const permissions = channel?.permissionsFor(interaction.member);
   if (
     channel?.guildId !== interaction.guild.id ||
     !permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]) ||
     (channel.type === ChannelType.PrivateThread &&
       !permissions.has(PermissionFlagsBits.ManageThreads) &&
-      !privateMemberVerified &&
       !channel.members.cache.has(interaction.user.id))
   ) {
     throw new ReportManagementError(
@@ -160,35 +160,23 @@ function checkChannelAccess(
   return channel;
 }
 
-async function resolveChannel(interaction, record) {
-  let channel;
+async function resolveChannel(interaction, record, member) {
   try {
-    channel = await interaction.guild.channels.fetch(record.channelId);
+    const channel = await fetchReadableChannel(interaction, record.channelId, member);
+    if (!channel)
+      throw new ReportManagementError(
+        "Du hast keinen Zugriff auf den Ergebniskanal bzw. diesen privaten Thread.",
+      );
+    return channel;
   } catch (error) {
+    if (error instanceof ReportManagementError) throw error;
     throw causedError(
       ReportManagementError,
-      "Der Ergebniskanal konnte nicht geladen werden. Bitte Zugriff und Kanal-ID prüfen.",
+      "Du hast keinen Zugriff auf den Ergebniskanal bzw. diesen privaten Thread. Bitte Kanalrechte und Thread-Mitgliedschaft prüfen.",
       error,
       { guildId: record.guildId, channelId: record.channelId, reportId: record.id },
     );
   }
-  if (
-    channel?.type === ChannelType.PrivateThread &&
-    !channel.permissionsFor(interaction.member)?.has(PermissionFlagsBits.ManageThreads)
-  ) {
-    try {
-      await channel.members.fetch({ member: interaction.user.id, force: true });
-    } catch (error) {
-      throw causedError(
-        ReportManagementError,
-        "Du hast keinen Zugriff auf diesen privaten Thread.",
-        error,
-        { guildId: record.guildId, channelId: record.channelId, reportId: record.id },
-      );
-    }
-    return checkChannelAccess(interaction, channel, true);
-  }
-  return checkChannelAccess(interaction, channel);
 }
 
 function unspoiler(value) {
@@ -312,19 +300,21 @@ function deletionPrompt(interaction, record) {
 
 async function removableMatches(interaction, store, managerRoleId) {
   if (!interaction.guild) return [];
+  const member = await currentMember(interaction);
+  if (!isLeagueManager(interaction, managerRoleId, member)) return [];
   const matches = store
     .list(interaction.guild.id)
     .filter(
       (match) =>
         match.publication?.status === "published" &&
-        canManage(interaction, match, "delete", undefined, managerRoleId),
+        canManage(interaction, match, "delete", undefined, managerRoleId, member),
     );
   // Verify each result channel once, including current private-thread membership.
   const access = new Map(
     await Promise.all(
       [...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
         try {
-          await resolveChannel(interaction, { guildId: interaction.guild.id, channelId });
+          await resolveChannel(interaction, { guildId: interaction.guild.id, channelId }, member);
           return [channelId, true];
         } catch (error) {
           if (!(error instanceof ReportManagementError)) throw error;
@@ -431,9 +421,7 @@ function removalPicker(interaction, matches, query, requestedPage = 0) {
 
 async function openRemoval(interaction, store, managerRoleId) {
   if (!isLeagueManager(interaction, managerRoleId))
-    throw new ReportManagementError(
-      "Nur die Ligaverwaltung und Serververwalter dürfen das Archiv bereinigen.",
-    );
+    throw new ReportManagementError("Nur die Ligaverwaltung darf das Archiv bereinigen.");
   await interaction.deferReply(privateReply);
   const season = interaction.options.getInteger("season", true);
   const matchday = interaction.options.getInteger("spieltag");
@@ -496,7 +484,9 @@ async function handleRemovalComponent(interaction, store, managerRoleId) {
         "Dieser Report wurde inzwischen geändert. Bitte /report-entfernen erneut verwenden.",
       );
     await interaction.deferUpdate();
-    await resolveChannel(interaction, record);
+    const member = await currentMember(interaction);
+    authorize(interaction, record, "delete", undefined, managerRoleId, member);
+    await resolveChannel(interaction, record, member);
     const { flags, ...prompt } = deletionPrompt(interaction, record);
     await interaction.editReply(prompt);
     return;
@@ -537,7 +527,12 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
   authorize(interaction, record, action, roleId, managerRoleId);
   checkChannelAccess(interaction, interaction.channel);
   if (action === "delete") {
-    await interaction.reply(deletionPrompt(interaction, record));
+    await interaction.deferReply(privateReply);
+    const member = await currentMember(interaction);
+    authorize(interaction, record, action, roleId, managerRoleId, member);
+    await resolveChannel(interaction, record, member);
+    const { flags, ...prompt } = deletionPrompt(interaction, record);
+    await interaction.editReply(prompt);
   } else if (record.change) {
     if (record.change.kind === "delete") {
       throw new ReportManagementError(
@@ -545,8 +540,8 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
       );
     }
     await interaction.deferReply(privateReply);
-    const channel = await resolveChannel(interaction, record);
     const member = await currentMember(interaction);
+    const channel = await resolveChannel(interaction, record, member);
     authorize(
       interaction,
       store.get(record.id, record.guildId),
@@ -555,7 +550,6 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
       managerRoleId,
       member,
     );
-    checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
     const kind = await manager.apply(
       record.id,
       record.guildId,
@@ -710,15 +704,14 @@ async function handleManagementComponent(
   verifyPlan();
   if (action === "edit") await interaction.deferReply(privateReply);
   else await interaction.deferUpdate();
-  const channel = await resolveChannel(interaction, record);
   const change =
     action === "edit"
       ? await correctionData(interaction, record, roleId, settingsStore)
       : { kind: "delete" };
-  // Recheck after asynchronous channel/member lookups; the store also verifies the revision.
+  // Recheck current roles and channel access before reserving the change.
   const member = await currentMember(interaction);
   authorize(interaction, store.get(id, record.guildId), action, roleId, managerRoleId, member);
-  checkChannelAccess(interaction, channel, channel.type === ChannelType.PrivateThread, member);
+  const channel = await resolveChannel(interaction, record, member);
   verifyPlan();
   const kind = await manager.apply(
     id,

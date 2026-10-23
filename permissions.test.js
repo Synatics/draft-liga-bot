@@ -15,14 +15,16 @@ const member = (roles = [], permissions = []) => ({
 });
 const interaction = (current) => ({ guild: { id: GUILD }, user: { id: USER }, member: current });
 
-test("participant and management roles grant separate rights without extra Discord permissions", () => {
+test("only league roles grant access; server permissions never replace a missing role", () => {
   for (const [roles, permissions, report, manage] of [
     [[], [], false, false],
     [[PARTICIPANT], [], true, false],
     [[MANAGER], [], true, true],
     [[PARTICIPANT, MANAGER], [], true, true],
-    [[], [P.ManageGuild], true, true],
-    [[], [P.Administrator], true, true],
+    [[], [P.ManageGuild], false, false],
+    [[], [P.Administrator], false, false],
+    [[PARTICIPANT], [P.Administrator], true, false],
+    [[MANAGER], [P.Administrator], true, true],
   ]) {
     const i = interaction(member(roles, permissions));
     assert.equal(canReport(i, PARTICIPANT, MANAGER), report);

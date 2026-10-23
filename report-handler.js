@@ -10,7 +10,7 @@ const {
   validateScore,
 } = require("./reports");
 const { normalizeReplayLink } = require("./match-store");
-const { canReport, currentMember, actorOf } = require("./permissions");
+const { canReport, currentMember, fetchReadableChannel, actorOf } = require("./permissions");
 const { logError, interactionContext } = require("./diagnostics");
 
 const reportCommand = {
@@ -31,9 +31,7 @@ function createReportHandler({
     const logContext = interactionContext(interaction);
     checkParticipantRole(interaction.guild, participantRoleId);
     if (!canReport(interaction, participantRoleId, managerRoleId)) {
-      throw new ReportError(
-        "Nur Teilnehmer, die Ligaverwaltung und Serververwalter dürfen Ergebnisse melden.",
-      );
+      throw new ReportError("Nur Teilnehmer und die Ligaverwaltung dürfen Ergebnisse melden.");
     }
 
     if (interaction.isChatInputCommand()) {
@@ -67,7 +65,12 @@ function createReportHandler({
     const score = interaction.fields.getTextInputValue("score");
     validateScore(score);
     const link = normalizeReplayLink(interaction.fields.getTextInputValue("link"));
-    // Read the season after the member lookups, in case an admin changed it meanwhile.
+    const channel = await fetchReadableChannel(interaction, interaction.channelId, member);
+    if (!channel)
+      throw new ReportError(
+        "Du hast keinen Zugriff mehr auf den Ergebniskanal oder dessen Verlauf.",
+      );
+    // Read the season after the access lookups, in case a league manager changed it meanwhile.
     const context = resolveReportContext(
       interaction.customId,
       interaction.fields,

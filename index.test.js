@@ -58,7 +58,7 @@ test("league settings, reports and role changes work together without exposing r
     displayName: "Admin",
     user: { bot: false },
     permissions: new discord.PermissionsBitField([discord.PermissionFlagsBits.ManageGuild]),
-    roles: { cache: new discord.Collection() },
+    roles: { cache: new discord.Collection([[managerRoleId, {}]]) },
   });
   const sequence = [];
   const posts = [];
@@ -369,7 +369,7 @@ test("league settings, reports and role changes work together without exposing r
     false,
   );
   await handle(denied);
-  assert.match(denied.response.content, /Server verwalten/);
+  assert.match(denied.response.content, /Ligaverwaltungsrolle/);
   assert.equal(
     new leagueSettings.LeagueSettingsStore(
       runtimeState.databasePath,
@@ -545,6 +545,13 @@ test("league settings, reports and role changes work together without exposing r
     async reply(payload) {
       this.response = payload;
     },
+    async deferReply(payload) {
+      this.deferred = true;
+      this.defer = payload;
+    },
+    async editReply(payload) {
+      this.response = payload;
+    },
   };
   await handle(management);
   assert.match(management.modal.title, /Report korrigieren · Season 3/);
@@ -680,6 +687,43 @@ test("league settings, reports and role changes work together without exposing r
     assert.equal(stored().length, countBefore);
     assert.equal(posts.length, postsBefore);
   });
+
+  await t.test("server permissions alone cannot authorize report creation", async () => {
+    for (const permission of [
+      discord.PermissionFlagsBits.ManageGuild,
+      discord.PermissionFlagsBits.Administrator,
+    ]) {
+      friend.permissions = new discord.PermissionsBitField([permission]);
+      const request = friendSubmission();
+      await handle(request);
+      assert.match(request.response.content, /Nur Teilnehmer/);
+      assert.equal(stored().length, countBefore);
+      assert.equal(posts.length, postsBefore);
+    }
+    friend.permissions = new discord.PermissionsBitField();
+  });
+
+  await t.test(
+    "revoked channel access prevents reports even while the participant role remains",
+    async () => {
+      friend.roles.cache.set(roleId, {});
+      const fetchChannel = guild.channels.fetch;
+      guild.channels.fetch = async (id) => ({
+        ...(await fetchChannel(id)),
+        permissionsFor: () => new discord.PermissionsBitField(),
+      });
+      try {
+        const request = friendSubmission();
+        await handle(request);
+        assert.match(request.response.content, /keinen Zugriff mehr/);
+        assert.equal(stored().length, countBefore);
+        assert.equal(posts.length, postsBefore);
+      } finally {
+        guild.channels.fetch = fetchChannel;
+        friend.roles.cache.clear();
+      }
+    },
+  );
 
   await t.test(
     "revoking a role while a report is open prevents publication and archive writes",

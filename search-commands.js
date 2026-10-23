@@ -1,12 +1,11 @@
 const {
   ApplicationCommandOptionType,
-  ChannelType,
   InteractionContextType,
   MessageFlags,
-  PermissionFlagsBits,
   escapeMarkdown,
 } = require("discord.js");
 const { logError, interactionContext } = require("./diagnostics");
+const { isLeagueMember, currentMember, fetchReadableChannel } = require("./permissions");
 const {
   matchRoundLabel,
   roundOf,
@@ -57,23 +56,29 @@ const searchCommand = {
   ],
 };
 
-function visibleMatches(interaction, store, season) {
-  if (!interaction.guild) return [];
-  return store.list(interaction.guild.id, season).filter((match) => {
-    const channel = interaction.guild.channels.cache.get(match.channelId);
-    const permissions = channel?.permissionsFor(interaction.member);
-    if (
-      !permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])
-    )
-      return false;
-    if (
-      channel.type === ChannelType.PrivateThread &&
-      !permissions.has(PermissionFlagsBits.ManageThreads) &&
-      !channel.members.cache.has(interaction.user.id)
-    )
-      return false;
-    return true;
-  });
+async function searchMember(interaction, config) {
+  if (!interaction.guild) return null;
+  const member = await currentMember(interaction);
+  return isLeagueMember(interaction, config.participantRoleId, config.managerRoleId, member)
+    ? member
+    : null;
+}
+
+async function visibleMatches(interaction, store, season, member) {
+  const matches = store.list(interaction.guild.id, season);
+  const access = new Map(
+    await Promise.all(
+      [...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
+        try {
+          return [channelId, Boolean(await fetchReadableChannel(interaction, channelId, member))];
+        } catch {
+          // Missing channels and failed access checks never expose archived data.
+          return [channelId, false];
+        }
+      }),
+    ),
+  );
+  return matches.filter((match) => access.get(match.channelId));
 }
 
 function seasonPlayers(matches, season) {
@@ -141,14 +146,21 @@ function resultMessages(matches) {
   return messages;
 }
 
-async function handleSearchAutocomplete(interaction, store) {
+async function handleSearchAutocomplete(interaction, store, config = {}) {
+  const member = await searchMember(interaction, config);
+  if (!member) {
+    await interaction.respond([]);
+    return;
+  }
   const season = interaction.options.getInteger("season");
   const focused = interaction.options.getFocused(true);
   if (focused.name === "runde") {
     await interaction.respond(
       season
         ? roundChoices(
-            visibleMatches(interaction, store, season).filter((match) => match.season === season),
+            (await visibleMatches(interaction, store, season, member)).filter(
+              (match) => match.season === season,
+            ),
             focused.value,
           )
         : [],
@@ -157,14 +169,21 @@ async function handleSearchAutocomplete(interaction, store) {
   }
   const choices =
     focused.name === "name" && season
-      ? playerChoices(visibleMatches(interaction, store, season), season, String(focused.value))
+      ? playerChoices(
+          await visibleMatches(interaction, store, season, member),
+          season,
+          String(focused.value),
+        )
       : [];
   await interaction.respond(choices);
 }
 
-async function handleSearchCommand(interaction, store) {
+async function handleSearchCommand(interaction, store, config = {}) {
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
   if (!interaction.guild) throw new SearchError("Bitte verwende /suchen auf dem Liga-Server.");
+  const member = await searchMember(interaction, config);
+  if (!member)
+    throw new SearchError("Nur Teilnehmer und die Ligaverwaltung dürfen Replays suchen.");
   const season = interaction.options.getInteger("season", true);
   const matchday = interaction.options.getInteger("spieltag");
   if (
@@ -179,7 +198,7 @@ async function handleSearchCommand(interaction, store) {
       "Bitte wähle eine Season zwischen 1 und 9999 und optional einen Spieltag zwischen 1 und 25.",
     );
   }
-  const matches = visibleMatches(interaction, store, season);
+  const matches = await visibleMatches(interaction, store, season, member);
   const roundInput = interaction.options.get?.("runde")?.value;
   const roundId = roundInput == null ? undefined : resolveRoundFilter(roundInput, matches);
   if (roundInput != null && (!roundId || matchday != null))

@@ -1,4 +1,4 @@
-const { PermissionFlagsBits: P } = require("discord.js");
+const { ChannelType, PermissionFlagsBits: P } = require("discord.js");
 
 function hasRole(member, roleId) {
   return Boolean(
@@ -24,23 +24,55 @@ function isParticipant(interaction, roleId, member = interaction.member) {
 }
 
 function isLeagueManager(interaction, managerRoleId, member = interaction.member) {
-  // Never fall back to an older interaction's permissions after refreshing the member.
   return Boolean(
     isCurrentUser(interaction, member) &&
-    (member.permissions?.has?.(P.ManageGuild) ||
-      (managerRoleId !== interaction.guild.id && hasRole(member, managerRoleId))),
+    managerRoleId !== interaction.guild.id &&
+    hasRole(member, managerRoleId),
   );
 }
 
-function canReport(interaction, participantRoleId, managerRoleId, member = interaction.member) {
+function isLeagueMember(
+  interaction,
+  participantRoleId,
+  managerRoleId,
+  member = interaction.member,
+) {
   return (
     isParticipant(interaction, participantRoleId, member) ||
     isLeagueManager(interaction, managerRoleId, member)
   );
 }
 
+const canReport = isLeagueMember;
+
 async function currentMember(interaction) {
   return interaction.guild.members.fetch({ user: interaction.user.id, force: true });
+}
+
+async function fetchCurrentChannel(interaction, channelId) {
+  const channel = await interaction.guild.channels.fetch(channelId, { force: true });
+  if (!channel) return null;
+  if (channel.guildId !== interaction.guild.id)
+    throw new Error("Der Ergebniskanal gehört zu einem anderen Server.");
+  // Thread permissions are inherited from the parent, which must be refreshed too.
+  if (channel.isThread?.()) {
+    const parent = await interaction.guild.channels.fetch(channel.parentId, { force: true });
+    if (!parent) return null;
+    if (parent.guildId !== interaction.guild.id)
+      throw new Error("Der übergeordnete Kanal gehört zu einem anderen Server.");
+  }
+  return channel;
+}
+
+async function fetchReadableChannel(interaction, channelId, member) {
+  const channel = await fetchCurrentChannel(interaction, channelId);
+  if (!channel) return null;
+  const permissions = channel.permissionsFor(member);
+  if (!permissions?.has([P.ViewChannel, P.ReadMessageHistory])) return null;
+  if (channel.type === ChannelType.PrivateThread && !permissions.has(P.ManageThreads)) {
+    await channel.members.fetch({ member: interaction.user.id, force: true });
+  }
+  return channel;
 }
 
 function actorOf(interaction, member = interaction.member) {
@@ -50,4 +82,14 @@ function actorOf(interaction, member = interaction.member) {
   };
 }
 
-module.exports = { hasRole, isParticipant, isLeagueManager, canReport, currentMember, actorOf };
+module.exports = {
+  hasRole,
+  isParticipant,
+  isLeagueManager,
+  isLeagueMember,
+  canReport,
+  currentMember,
+  fetchCurrentChannel,
+  fetchReadableChannel,
+  actorOf,
+};

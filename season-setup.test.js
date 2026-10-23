@@ -3,7 +3,12 @@ const fs = require("node:fs");
 const { dirname, join } = require("node:path");
 const { tmpdir } = require("node:os");
 const { test } = require("node:test");
-const { Collection, PermissionsBitField, MessageFlags } = require("discord.js");
+const {
+  Collection,
+  PermissionsBitField,
+  PermissionFlagsBits: P,
+  MessageFlags,
+} = require("discord.js");
 const { LigaDatabase } = require("./database");
 const { LeagueSettingsStore } = require("./league-settings");
 const { leagueCommand } = require("./league-commands");
@@ -288,11 +293,12 @@ test("drafts reject other users/guilds, stale steps, expired sessions and forms 
 test("current management rights are refreshed on submit/save even when the interaction still carries an old role", async (t) => {
   const f = setup(t);
   f.members.get(OTHER).roles.cache.clear();
+  f.members.get(OTHER).permissions = new PermissionsBitField([P.Administrator]);
   await assert.rejects(f.open(OTHER), /Ligaverwaltungsrolle/);
   const preview = await f.preview();
   f.fetchWith(async (user) => ({
     id: user,
-    permissions: new PermissionsBitField(),
+    permissions: new PermissionsBitField([P.Administrator]),
     roles: { cache: new Collection() },
   }));
   await assert.rejects(f.click(preview, "save"), /Ligaverwaltungsrolle/);
@@ -305,7 +311,7 @@ test("current management rights are refreshed on submit/save even when the inter
   assert.equal(f.settings.get(GUILD).season, 5);
 });
 
-test("two administrators cannot silently overwrite each other's settings with an older preview", async (t) => {
+test("two league managers cannot silently overwrite each other's settings with an older preview", async (t) => {
   const f = setup(t);
   const first = await f.preview();
   const second = await f.preview({ number: "6" }, OTHER);
