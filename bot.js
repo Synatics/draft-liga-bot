@@ -22,7 +22,7 @@ async function startBot({
   try {
     state = prepare(env);
     const { config, databasePath, settingsStore, matchStore } = state;
-    logger.log("✅ Konfiguration und Datenspeicher geprüft.");
+    logger.log("Konfiguration und Datenspeicher geprüft.");
     const reportPublisher = new ReportPublisher(matchStore);
     const reportManager = new ReportManager(matchStore);
     client = createClient({
@@ -65,7 +65,7 @@ async function startBot({
       ),
     );
     client.on(Events.ClientReady, () => {
-      logger.log("✅ Bot ist mit Discord verbunden.");
+      logger.log("Bot ist mit Discord verbunden.");
       loadedGuilds.clear();
       for (const guild of client.guilds.cache.values()) warmGuild(guild);
       installReportButtons(client, matchStore, logger).catch((error) =>

@@ -168,7 +168,7 @@ test("submission resolves IDs to current nicknames and preserves the result form
     submitted.getTextInputValue("score"),
     LINK,
   ).toJSON();
-  assert.match(embed.title, /^🏆 Liga Match: (Jan Neu vs\. Max|Max vs\. Jan Neu)$/);
+  assert.match(embed.title, /^Liga Match: (Jan Neu vs\. Max|Max vs\. Jan Neu)$/);
   assert.equal(embed.color, 0xffd700);
   for (const field of embed.fields.slice(0, 3)) assert.match(field.value, /^\|\| .+ \|\|$/);
   assert.equal(embed.fields[3].value, LINK);
@@ -217,7 +217,7 @@ test("duplicate nicknames remain distinct by ID and never produce an undefined t
   const { winner, loser } = await resolveReportPlayers(guild, ROLE_ID, fields());
   assert.equal(
     createResultEmbed(winner, loser, "2-0", LINK).toJSON().title,
-    "🏆 Liga Match: Max vs. Max",
+    "Liga Match: Max vs. Max",
   );
 });
 
@@ -282,7 +282,7 @@ test("result shows season and selected matchday above the match title without a 
   const message = createResultMessage("Max", "Jan", "2-0", LINK, { season: 3, matchday: 2 });
   const embed = message.embeds[0].toJSON();
   assert.equal(embed.author.name, "Season 3 · Spieltag 2");
-  assert.match(embed.title, /^🏆 Liga Match: (Max vs\. Jan|Jan vs\. Max)$/);
+  assert.match(embed.title, /^Liga Match: (Max vs\. Jan|Jan vs\. Max)$/);
   assert.equal(message.content, undefined);
   assert.deepEqual(message.allowedMentions, { parse: [] });
   for (const field of embed.fields.slice(0, 3)) assert.match(field.value, /^\|\| .+ \|\|$/);

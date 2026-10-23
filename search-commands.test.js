@@ -97,11 +97,11 @@ test("search filters by season, player ID and optional matchday and sends the sa
     `**Spieltag 1 · Jan vs. Max**\n<${first.link}>\n\n**Spieltag 2 · Jan vs. Max**\n<${second.link}>`,
   );
   assert.deepEqual(all.dms[0].allowedMentions, { parse: [] });
-  assert.equal(all.sent[0].content, "✅ Ich habe dir 2 Replays per DM geschickt.");
+  assert.equal(all.sent[0].content, "Ich habe dir 2 Replays per DM geschickt.");
   const specific = interaction({ name: "jan", matchday: 2 });
   await handleSearchCommand(specific, store);
   assert.equal(specific.dms[0].content, `**Spieltag 2 · Jan vs. Max**\n<${second.link}>`);
-  assert.equal(specific.sent[0].content, "✅ Ich habe dir 1 Replay per DM geschickt.");
+  assert.equal(specific.sent[0].content, "Ich habe dir 1 Replay per DM geschickt.");
 });
 
 test("search suggests archived participants without a role and resolves old names to the same ID", async () => {
@@ -187,7 +187,7 @@ test("large searches send every replay within Discord's message limit as normal 
   );
   assert.ok(search.dms.every((message) => message.flags.includes(MessageFlags.SuppressEmbeds)));
   assert.equal(search.sent.length, 1);
-  assert.equal(search.sent[0].content, "✅ Ich habe dir 25 Replays per DM geschickt.");
+  assert.equal(search.sent[0].content, "Ich habe dir 25 Replays per DM geschickt.");
 });
 
 test("search handles empty archives, unknown players and missing optional day without requiring an active season", async () => {
@@ -217,7 +217,7 @@ test("blocked DMs give private guidance without posting results or a false succe
     assert.equal(search.sent.length, 1);
     assert.match(search.sent[0].content, /Direktnachrichten von Servermitgliedern/);
     assert.ok(!search.sent[0].content.includes("https://"));
-    assert.ok(!search.sent[0].content.includes("✅"));
+    assert.ok(!search.sent[0].content.includes("Ich habe dir"));
   }
 });
 
@@ -239,7 +239,7 @@ test("a failure partway through DM delivery reports partial success and stops se
   assert.equal(logged.length, 1);
   assert.match(search.sent[0].content, /1 von 3 Nachrichten wurden zugestellt/);
   assert.match(search.sent[0].content, /später erneut/);
-  assert.ok(!search.sent[0].content.includes("✅"));
+  assert.ok(!search.sent[0].content.includes("Ich habe dir"));
 });
 
 test("Markdown and mentions in saved names cannot change the search result layout or trigger mentions", () => {

@@ -140,17 +140,17 @@ function startAutomaticBackups(backups, logger = console) {
   const check = () => {
     try {
       const result = backups.create();
-      if (result.created) logger.log(`✅ Datensicherung erstellt: ${result.path}`);
+      if (result.created) logger.log(`Datensicherung erstellt: ${result.path}`);
       for (const failure of result.cleanupErrors)
         logError(
-          "⚠️ Alte Datensicherung konnte nicht entfernt werden:",
+          "Alte Datensicherung konnte nicht entfernt werden:",
           failure.error,
           { operation: "backup.cleanup", backupName: failure.backupName },
           logger,
         );
     } catch (error) {
       logError(
-        "⚠️ Datensicherung fehlgeschlagen. Bitte Datenordner und freien Speicher prüfen.",
+        "Datensicherung fehlgeschlagen. Bitte Datenordner und freien Speicher prüfen.",
         error,
         { operation: "backup.create" },
         logger,

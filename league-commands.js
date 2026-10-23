@@ -64,14 +64,13 @@ async function handleLeagueCommand(interaction, settingsStore, database, config 
   } else {
     throw new LeagueSettingsError("Unbekannter Liga-Befehl.");
   }
-  const prefix = subcommand === "status" ? "ℹ️" : "✅ Gespeichert:";
   const schedule = settings.startDate
     ? `Start: ${settings.startDate.split("-").reverse().join(".")} · Wochenwechsel: Montag, 00:00 Uhr deutscher Zeit.`
     : "Die Wochenautomatik ist noch nicht eingerichtet. Bitte /liga season mit startdatum ausführen.";
   await interaction.editReply({
     content: settings.rounds
-      ? `${prefix} Season ${settings.season} · ${roundLabel(settings.currentRound)}${settings.status === "upcoming" ? " · noch nicht gestartet" : settings.status === "finished" ? " · Season beendet" : ""}\nWoche ${Math.max(1, Math.min(settings.week, settings.rounds.length))} von ${settings.rounds.length} · ${settings.matchdays} reguläre Spieltage\n${settings.status === "redraft" ? `Nächste Woche: ${roundLabel(settings.nextRound)}\n` : ""}${schedule}`
-      : `${prefix} Season ${settings.season} · Spieltag ${settings.currentMatchday} von ${settings.matchdays}\n${schedule}`,
+      ? `Season ${settings.season} · ${roundLabel(settings.currentRound)}${settings.status === "upcoming" ? " · noch nicht gestartet" : settings.status === "finished" ? " · Season beendet" : ""}\nWoche ${Math.max(1, Math.min(settings.week, settings.rounds.length))} von ${settings.rounds.length} · ${settings.matchdays} reguläre Spieltage\n${settings.status === "redraft" ? `Nächste Woche: ${roundLabel(settings.nextRound)}\n` : ""}${schedule}`
+      : `Season ${settings.season} · Spieltag ${settings.currentMatchday} von ${settings.matchdays}\n${schedule}`,
   });
 }
 

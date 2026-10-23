@@ -7,12 +7,10 @@ function reportButtons(id) {
       new ButtonBuilder()
         .setCustomId(`report:edit:${id}`)
         .setLabel("Bearbeiten")
-        .setEmoji("✏️")
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`report:delete:${id}`)
         .setLabel("Löschen")
-        .setEmoji("🗑️")
         .setStyle(ButtonStyle.Danger),
     ),
   ];

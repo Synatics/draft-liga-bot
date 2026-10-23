@@ -14,16 +14,16 @@ try {
     ? new SqliteBackups(databasePath)
     : new DataBackups(settingsPath);
   const result = backups.create({ force: true });
-  console.log(`✅ Datensicherung erstellt: ${result.path}`);
+  console.log(`Datensicherung erstellt: ${result.path}`);
   for (const failure of result.cleanupErrors)
-    logError("⚠️ Alte Datensicherung konnte nicht entfernt werden:", failure.error, {
+    logError("Alte Datensicherung konnte nicht entfernt werden:", failure.error, {
       operation: "backup.cleanup",
       backupName: failure.backupName,
     });
 } catch (error) {
   const hint = error instanceof LeagueSettingsError ? ` ${error.message}` : "";
   logError(
-    `❌ Datensicherung fehlgeschlagen.${hint} Bitte Datenpfad und Dateien prüfen. Den Bot vor einer manuellen Sicherung stoppen.`,
+    `Datensicherung fehlgeschlagen.${hint} Bitte Datenpfad und Dateien prüfen. Den Bot vor einer manuellen Sicherung stoppen.`,
     error,
     { operation: "backup.create" },
   );

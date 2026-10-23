@@ -155,7 +155,7 @@ async function handleAuditCommand(interaction, database, config) {
         });
       await interaction.editReply({
         content:
-          `❌ Das Protokoll konnte nicht vollständig per DM zugestellt werden. ${delivered} von ${files.length} Dateien zugestellt. ` +
+          `Das Protokoll konnte nicht vollständig per DM zugestellt werden. ${delivered} von ${files.length} Dateien zugestellt. ` +
           (blocked
             ? "Bitte Direktnachrichten von Servermitgliedern erlauben und prüfen, ob der Bot blockiert ist."
             : "Bitte später erneut versuchen."),
@@ -164,7 +164,7 @@ async function handleAuditCommand(interaction, database, config) {
     }
   }
   await interaction.editReply({
-    content: `✅ Das Protokoll für Season ${season} wurde dir per DM geschickt.`,
+    content: `Das Protokoll für Season ${season} wurde dir per DM geschickt.`,
   });
 }
 

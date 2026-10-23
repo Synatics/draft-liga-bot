@@ -229,14 +229,14 @@ async function handleSearchCommand(interaction, store) {
         ? "Bitte erlaube Direktnachrichten von Servermitgliedern und prüfe, ob du den Bot blockiert hast."
         : "Bitte versuche die Suche später erneut.";
       await interaction.editReply({
-        content: `❌ Die Suchergebnisse konnten nicht vollständig per DM gesendet werden. ${progress}${hint}`,
+        content: `Die Suchergebnisse konnten nicht vollständig per DM gesendet werden. ${progress}${hint}`,
         allowedMentions: { parse: [] },
       });
       return;
     }
   }
   await interaction.editReply({
-    content: `✅ Ich habe dir ${found.length} ${found.length === 1 ? "Replay" : "Replays"} per DM geschickt.`,
+    content: `Ich habe dir ${found.length} ${found.length === 1 ? "Replay" : "Replays"} per DM geschickt.`,
     allowedMentions: { parse: [] },
   });
 }

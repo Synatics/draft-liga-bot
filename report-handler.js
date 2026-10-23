@@ -113,20 +113,20 @@ function createReportHandler({
       ? `https://discord.com/channels/${interaction.guild.id}/${interaction.channelId}/${publication.messageId}`
       : null;
     const replies = {
-      published: "✅ Ergebnis erfolgreich gepostet!",
-      duplicate: `ℹ️ Dieses Match wurde bereits gepostet: <${messageLink}>`,
-      "in-progress": "ℹ️ Dieses Match wird gerade gepostet. Bitte warte kurz.",
+      published: "Ergebnis erfolgreich gepostet!",
+      duplicate: `Dieses Match wurde bereits gepostet: <${messageLink}>`,
+      "in-progress": "Dieses Match wird gerade gepostet. Bitte warte kurz.",
       maintenance:
-        "ℹ️ Dieser Report wird gerade korrigiert oder entfernt. Bitte warte, bis die Änderung abgeschlossen ist.",
+        "Dieser Report wird gerade korrigiert oder entfernt. Bitte warte, bis die Änderung abgeschlossen ist.",
       legacy:
-        "ℹ️ Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
+        "Dieses Match ist bereits im Replay-Archiv vorhanden. Da es vor dem Duplikatschutz gespeichert wurde, wird kein weiterer Ergebnis-Post erstellt. Bitte prüfe den bisherigen Post im Kanal.",
       failed:
-        "❌ Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
+        "Das Replay ist für /suchen gespeichert, aber der Ergebnis-Post konnte nicht gesendet werden. Bitte prüfe die Kanalrechte des Bots und versuche /report erneut.",
       "failed-unconfirmed":
-        "❌ Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
+        "Discord hat den Ergebnis-Post abgelehnt. Außerdem konnte der Versandstatus nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher und den Versandstatus im Archiv.",
       uncertain:
-        "⚠️ Bei diesem Match ist unklar, ob Discord den Ergebnis-Post bereits erhalten hat. Damit kein doppelter Post entsteht, wird es nicht erneut gesendet. Bitte prüfe den Kanal und lass bei Bedarf den Versandstatus im Archiv prüfen.",
-      "published-unconfirmed": `⚠️ Das Ergebnis wurde gepostet: <${messageLink}>. Der Versandstatus konnte aber nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher.`,
+        "Bei diesem Match ist unklar, ob Discord den Ergebnis-Post bereits erhalten hat. Damit kein doppelter Post entsteht, wird es nicht erneut gesendet. Bitte prüfe den Kanal und lass bei Bedarf den Versandstatus im Archiv prüfen.",
+      "published-unconfirmed": `Das Ergebnis wurde gepostet: <${messageLink}>. Der Versandstatus konnte aber nicht gespeichert werden. Ein erneuter Versand wird vorsichtshalber blockiert. Bitte prüfe den Datenspeicher.`,
     };
     await interaction.editReply({
       content: replies[publication.status],

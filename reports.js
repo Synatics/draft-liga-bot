@@ -221,7 +221,7 @@ function createResultEmbed(winner, loser, score, link) {
   if (Math.random() < 0.5) players.reverse();
 
   return new EmbedBuilder()
-    .setTitle(`🏆 Liga Match: ${players[0]} vs. ${players[1]}`)
+    .setTitle(`Liga Match: ${players[0]} vs. ${players[1]}`)
     .setColor("#FFD700")
     .addFields(
       { name: "Gewinner", value: `|| ${centerText(escapeMarkdown(winner))} ||`, inline: true },

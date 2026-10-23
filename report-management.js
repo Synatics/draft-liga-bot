@@ -568,8 +568,8 @@ async function openManagement(interaction, store, manager, roleId, settingsStore
     await interaction.editReply({
       content:
         kind === "delete"
-          ? "✅ Die vorgemerkte Löschung wurde abgeschlossen."
-          : "✅ Die vorgemerkte Korrektur wurde abgeschlossen. Für weitere Änderungen die Aktion erneut öffnen.",
+          ? "Die vorgemerkte Löschung wurde abgeschlossen."
+          : "Die vorgemerkte Korrektur wurde abgeschlossen. Für weitere Änderungen die Aktion erneut öffnen.",
       allowedMentions: { parse: [] },
     });
   } else {
@@ -732,8 +732,8 @@ async function handleManagementComponent(
   await interaction.editReply({
     content:
       kind === "delete"
-        ? "✅ Report und Suchtreffer wurden entfernt."
-        : `✅ Report korrigiert: **${seasonRoundLabel(change.target)}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
+        ? "Report und Suchtreffer wurden entfernt."
+        : `Report korrigiert: **${seasonRoundLabel(change.target)}**. Der vorhandene Ergebnispost und der Suchtreffer sind aktualisiert.`,
     components: [],
     embeds: [],
     allowedMentions: { parse: [] },

@@ -221,7 +221,7 @@ function prompt(session, error) {
   row.addComponents(button(session, "cancel", "Abbrechen"));
   return {
     content: error
-      ? `❌ ${error.message}\nNoch nichts gespeichert. Bitte die Eingaben korrigieren.`
+      ? `${error.message}\nNoch nichts gespeichert. Bitte die Eingaben korrigieren.`
       : session.step === "preview"
         ? "Bitte den Wochenplan prüfen. Erst „Season speichern“ übernimmt die Einstellungen. Bereits gepostete Ergebnisse behalten ihre gespeicherte Runde."
         : "Die Grunddaten sind übernommen. Über „Weiter“ legst du die weiteren Einstellungen fest. Noch nichts gespeichert.",
@@ -389,7 +389,7 @@ function createSeasonSetup({ settingsStore, managerRoleId, now = Date.now }) {
         );
         sessions.delete(session.id);
         await interaction.editReply({
-          content: `✅ Season ${result.season} · ${roundLabel(result.currentRound)} gespeichert. Der Wochenwechsel erfolgt automatisch montags um 00:00 Uhr deutscher Zeit.`,
+          content: `Season ${result.season} · ${roundLabel(result.currentRound)} gespeichert. Der Wochenwechsel erfolgt automatisch montags um 00:00 Uhr deutscher Zeit.`,
           embeds: [planEmbed(session, true)],
           components: [],
           allowedMentions: { parse: [] },

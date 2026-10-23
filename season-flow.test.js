@@ -294,7 +294,7 @@ test("season commands, pause status and report routing publish explicit playoff 
   await f.report("semifinal");
   const post = f.sent[1];
   assert.equal(post.embeds[0].author.name, "Season 5 · Playoffs · Halbfinale");
-  assert.match(post.embeds[0].title, /^🏆 Liga Match: (Jan vs\. Max|Max vs\. Jan)$/);
+  assert.match(post.embeds[0].title, /^Liga Match: (Jan vs\. Max|Max vs\. Jan)$/);
   assert.ok(
     post.embeds[0].fields
       .slice(0, 3)

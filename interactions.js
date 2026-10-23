@@ -154,8 +154,8 @@ function createInteractionHandler({
           logger,
         );
       const content = expected
-        ? `❌ ${error.message}`
-        : "❌ Es gab einen Fehler beim Verarbeiten des Befehls. Bitte versuche es erneut.";
+        ? error.message
+        : "Es gab einen Fehler beim Verarbeiten des Befehls. Bitte versuche es erneut.";
       try {
         if (interaction.deferred || interaction.replied) {
           await interaction.editReply({ content });

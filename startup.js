@@ -178,7 +178,7 @@ async function connectDiscord(
         }
         controller.signal.throwIfAborted();
         logger.log(
-          `✅ Discord-Befehle registriert: ${commands
+          `Discord-Befehle registriert: ${commands
             .map((command) =>
               command.type === ApplicationCommandType.Message
                 ? `„${command.name}“`
@@ -246,7 +246,7 @@ async function failStartup(
 ) {
   runtime.exitCode = 1;
   logError(
-    `❌ Bot-Start abgebrochen: ${error instanceof StartupError ? error.message : "Unerwarteter Fehler beim Initialisieren. Bitte Konfiguration und Datenspeicher prüfen."}`,
+    `Bot-Start abgebrochen: ${error instanceof StartupError ? error.message : "Unerwarteter Fehler beim Initialisieren. Bitte Konfiguration und Datenspeicher prüfen."}`,
     error,
     {},
     logger,
