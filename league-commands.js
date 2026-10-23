@@ -6,7 +6,7 @@ const {
 const { LeagueSettingsError } = require("./league-settings");
 const { isLeagueManager, currentMember } = require("./permissions");
 const { handleAuditCommand } = require("./audit-commands");
-const { STAGE_NAMES, roundLabel } = require("./season-rounds");
+const { roundLabel } = require("./season-rounds");
 
 const leagueCommand = {
   name: "liga",
@@ -31,56 +31,7 @@ const leagueCommand = {
     {
       type: ApplicationCommandOptionType.Subcommand,
       name: "season",
-      description: "Seasonplan mit Liga, Playoffs oder Hin- und Rückrunde einrichten",
-      options: [
-        {
-          type: ApplicationCommandOptionType.Integer,
-          name: "nummer",
-          description: "Nummer der Season",
-          required: true,
-          min_value: 1,
-          max_value: 9999,
-        },
-        {
-          type: ApplicationCommandOptionType.Integer,
-          name: "spieltage",
-          description:
-            "Reguläre Spieltage insgesamt; bei Hin-/Rückrunde beide Hälften zusammen, ohne Playoffs",
-          required: true,
-          min_value: 1,
-          max_value: 25,
-        },
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "startdatum",
-          description: "Montag von Spieltag 1 (TT.MM.JJJJ oder JJJJ-MM-TT)",
-          required: true,
-          min_length: 10,
-          max_length: 10,
-        },
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "format",
-          description: "Season-Format (Standard: Liga ohne Playoffs)",
-          choices: [
-            { name: "Liga ohne Playoffs", value: "league" },
-            { name: "Liga mit Playoffs", value: "playoffs" },
-            { name: "Hin- und Rückrunde ohne Playoffs", value: "home-away" },
-          ],
-        },
-        {
-          type: ApplicationCommandOptionType.Boolean,
-          name: "redraft",
-          description:
-            "Eine Redraft-Woche vor Playoffs bzw. zwischen Hin- und Rückrunde (Standard: Nein)",
-        },
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "playoffs_ab",
-          description: "Erste Playoff-Runde (bei Liga mit Playoffs Standard: Halbfinale)",
-          choices: Object.entries(STAGE_NAMES).map(([value, name]) => ({ name, value })),
-        },
-      ],
+      description: "Season über einen geführten Dialog einrichten oder korrigieren",
     },
     {
       type: ApplicationCommandOptionType.Subcommand,
@@ -90,7 +41,7 @@ const leagueCommand = {
   ],
 };
 
-async function handleLeagueCommand(interaction, settingsStore, database, config = {}) {
+async function handleLeagueCommand(interaction, settingsStore, database, config = {}, seasonSetup) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "log") return handleAuditCommand(interaction, database, config);
   if (!isLeagueManager(interaction, config.managerRoleId)) {
@@ -98,29 +49,13 @@ async function handleLeagueCommand(interaction, settingsStore, database, config 
       "Zum Verwalten der Liga brauchst du die Ligaverwaltungsrolle oder „Server verwalten“.",
     );
   }
+  if (subcommand === "season") return seasonSetup.open(interaction);
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
   const member = await currentMember(interaction);
   if (!isLeagueManager(interaction, config.managerRoleId, member))
     throw new LeagueSettingsError("Du darfst die Liga nicht mehr verwalten.");
   let settings;
-  if (subcommand === "season") {
-    const format = interaction.options.getString("format");
-    const redraft = interaction.options.getBoolean?.("redraft");
-    const playoffsFrom = interaction.options.getString("playoffs_ab");
-    settings = settingsStore.setSeason(
-      interaction.guild.id,
-      interaction.options.getInteger("nummer", true),
-      interaction.options.getInteger("spieltage", true),
-      interaction.options.getString("startdatum", true),
-      format != null || redraft != null || playoffsFrom != null
-        ? {
-            format: format ?? (playoffsFrom ? "playoffs" : "league"),
-            redraft: redraft ?? false,
-            playoffsFrom: playoffsFrom ?? undefined,
-          }
-        : undefined,
-    );
-  } else if (subcommand === "spieltag") {
+  if (subcommand === "spieltag") {
     throw new LeagueSettingsError(
       "Der Spieltag wird jetzt automatisch bestimmt. Bitte das Startdatum über /liga season einstellen.",
     );

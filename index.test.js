@@ -9,6 +9,8 @@ const leagueSettings = require("./league-settings");
 const { MatchStore } = require("./match-store");
 const { startBot } = require("./bot");
 const { prepareStartup } = require("./startup");
+const { configureSeason } = require("./test-helpers/season-setup");
+const { planToken } = require("./season-rounds");
 
 test("league settings, reports and role changes work together without exposing results", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "pokemon-liga-index-test-"));
@@ -225,9 +227,11 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(loads, 1, "Opening the modal must use the live member cache");
 
   function submission(season = 3, matchday = "7", score = "2-0") {
+    const active = runtimeState.settingsStore.get(guild.id);
+    const planned = active.season === season && active.rounds;
     return {
       guild,
-      customId: `submit_report:${season}`,
+      customId: `submit_report:${season}${planned ? `:${planToken(active)}` : ""}`,
       isChatInputCommand: () => false,
       isModalSubmit: () => true,
       user: { id: janId },
@@ -237,8 +241,8 @@ test("league settings, reports and role changes work together without exposing r
         {
           component: {
             type: discord.ComponentType.StringSelect,
-            customId: "matchday",
-            values: [matchday],
+            customId: planned ? "round" : "matchday",
+            values: [planned ? `matchday-${matchday}` : matchday],
           },
         },
         {
@@ -392,14 +396,27 @@ test("league settings, reports and role changes work together without exposing r
   assert.equal(posts.length, 2);
   assert.equal(posts[1].embeds[0].toJSON().author.name, "Season 3 · Spieltag 2");
 
-  const seasonChange = adminCommand("season", {
-    nummer: 4,
-    spieltage: 18,
-    startdatum: "19.10.2026",
+  const seasonChange = await configureSeason({
+    handle,
+    interaction(changes) {
+      return Object.assign(
+        adminCommand("season"),
+        {
+          isChatInputCommand: () => false,
+          isModalSubmit: () => false,
+          async showModal(modal) {
+            this.modal = modal.toJSON();
+          },
+          async deferUpdate() {
+            this.deferred = true;
+          },
+        },
+        changes,
+      );
+    },
+    values: { nummer: 4, spieltage: 18, startdatum: "19.10.2026" },
   });
-  await handle(seasonChange);
-  assert.match(seasonChange.response.content, /Season 4 · Spieltag 1 von 18/);
-  assert.match(seasonChange.response.content, /Start: 19\.10\.2026/);
+  assert.match(seasonChange.response.content, /Season 4 · Spieltag 1 gespeichert/);
   const oldSeason = submission(3, "7");
   await handle(oldSeason);
   assert.equal(posts.length, 2);
@@ -407,7 +424,8 @@ test("league settings, reports and role changes work together without exposing r
 
   const status = adminCommand("status");
   await handle(status);
-  assert.match(status.response.content, /Season 4 · Spieltag 1 von 18/);
+  assert.match(status.response.content, /Season 4 · Spieltag 1/);
+  assert.match(status.response.content, /18 reguläre Spieltage/);
 
   members.get(maxId).roles.cache.delete(roleId);
   const stale = submission(4);
@@ -708,7 +726,13 @@ test("league settings, reports and role changes work together without exposing r
         customId: button.modal.custom_id,
         fields: {
           getStringSelectValues: (name) => [
-            name === "matchday" ? "4" : name === "winner" ? janId : maxId,
+            name === "round"
+              ? "matchday-4"
+              : name === "matchday"
+                ? "4"
+                : name === "winner"
+                  ? janId
+                  : maxId,
           ],
           getTextInputValue: (name) => (name === "score" ? "1-0" : record.link),
         },

@@ -18,6 +18,7 @@ const {
 } = require("./search-commands");
 const { reportCommand, createReportHandler } = require("./report-handler");
 const { logError, interactionContext } = require("./diagnostics");
+const { createSeasonSetup } = require("./season-setup");
 
 const commands = [reportCommand, leagueCommand, searchCommand, ...managementCommands];
 
@@ -30,6 +31,7 @@ function createInteractionHandler({
   reportManager,
   memberLoader,
   logger = console,
+  seasonSetup = createSeasonSetup({ settingsStore, managerRoleId: config.managerRoleId }),
 }) {
   const { participantRoleId, managerRoleId } = config;
   const handleReport = createReportHandler({
@@ -43,6 +45,9 @@ function createInteractionHandler({
     const isReportCommand =
       interaction.isChatInputCommand() && interaction.commandName === "report";
     const isLeagueCommand = interaction.isChatInputCommand() && interaction.commandName === "liga";
+    const isSeasonSetup =
+      (interaction.isButton?.() || interaction.isModalSubmit()) &&
+      /^season:/.test(interaction.customId);
     const isSearchCommand =
       interaction.isChatInputCommand() && interaction.commandName === "suchen";
     const isSearchAutocomplete =
@@ -64,6 +69,7 @@ function createInteractionHandler({
       !isReportCommand &&
       !isReportSubmit &&
       !isLeagueCommand &&
+      !isSeasonSetup &&
       !isSearchCommand &&
       !isSearchAutocomplete &&
       !isRemovalAutocomplete &&
@@ -74,6 +80,10 @@ function createInteractionHandler({
     const logContext = interactionContext(interaction);
 
     try {
+      if (isSeasonSetup) {
+        await seasonSetup.handle(interaction);
+        return;
+      }
       if (isRemovalAutocomplete) {
         await handleRemovalAutocomplete(interaction, matchStore, managerRoleId);
         return;
@@ -109,7 +119,7 @@ function createInteractionHandler({
         return;
       }
       if (isLeagueCommand) {
-        await handleLeagueCommand(interaction, settingsStore, database, config);
+        await handleLeagueCommand(interaction, settingsStore, database, config, seasonSetup);
         return;
       }
       await handleReport(interaction);

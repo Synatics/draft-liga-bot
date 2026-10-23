@@ -1,4 +1,5 @@
 const { readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const { join, resolve, relative, isAbsolute, sep } = require("node:path");
 const { causedError } = require("./diagnostics");
 const { writeJsonAtomic } = require("./json-storage");
@@ -209,6 +210,20 @@ class LeagueSettingsStore {
   /** @param {string} guildId @returns {import('./data-types').ActiveSeason} */
   get(guildId) {
     return this.getSeason(guildId, this.guilds[guildId]?.season);
+  }
+
+  /** Saved configuration without calendar progress or historical entries; safe to edit as a draft. */
+  configuration(guildId) {
+    const stored = this.guilds[guildId];
+    if (!stored) return undefined;
+    const { history, ...settings } = stored;
+    return structuredClone(settings);
+  }
+
+  revision(guildId) {
+    return createHash("sha256")
+      .update(JSON.stringify(this.configuration(guildId) ?? null))
+      .digest("hex");
   }
 
   getSeason(guildId, season) {

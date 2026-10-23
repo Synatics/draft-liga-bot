@@ -108,23 +108,33 @@ Alle Slash-Befehle werden auf dem Liga-Server gestartet. Beispiele zeigen ausgew
 ### Season einrichten
 
 ```text
-/liga season nummer:4 spieltage:10 startdatum:19.10.2026
-/liga season nummer:5 spieltage:9 startdatum:19.10.2026 format:playoffs redraft:True playoffs_ab:semifinal
-/liga season nummer:6 spieltage:18 startdatum:19.10.2026 format:home-away redraft:True
+/liga season
 /liga status
 ```
 
-Das Startdatum muss ein Montag sein; `TT.MM.JJJJ` und `JJJJ-MM-TT` werden akzeptiert. Jede spielbare Runde und die optionale Redraft-Pause dauern eine Woche, jeweils Montag bis Sonntag in `Europe/Berlin`. Der Wochenwechsel folgt dem Kalender und braucht keinen wöchentlichen Eingriff. Neustarts, Offline-Zeiten und Sommerzeit ändern daran nichts. Für eine neue Season eine neue Nummer verwenden.
+`/liga season` hat keine zusätzlichen Slash-Parameter mehr. Der geführte Dialog ist privat:
 
-`format` bietet die Auswahlen **Liga ohne Playoffs** (`league`, Standard), **Liga mit Playoffs** (`playoffs`) und **Hin- und Rückrunde ohne Playoffs** (`home-away`). `spieltage` zählt ausschließlich reguläre Spieltage, bei Hin-/Rückrunde beide Hälften zusammen: `18` bedeutet neun Hin- und neun Rückrundenspieltage. Dafür ist eine gerade Gesamtzahl erforderlich; die Nummerierung läuft von 1 bis 18 durch. Die Optionswerte in den Beispielen entsprechen den internen Auswahlwerten; Discord zeigt die deutschen Bezeichnungen an.
+1. **Grunddaten:** Season-Nummer, reguläre Spieltage insgesamt, Startdatum und Format auswählen. Bei einer bestehenden Season sind die gespeicherten Werte vorausgefüllt. Nummer beibehalten zum Korrigieren, eine neue Nummer für eine neue Season verwenden.
+2. **Weitere Einstellungen:** Für Playoffs und Hin-/Rückrunde öffnet der private **Weiter**-Button ein zweites Modal. Dort Redraft als **Ja/Nein** wählen; beim Playoff-Format zusätzlich die erste Playoff-Runde festlegen. Eine reine Liga benötigt nur das erste Modal.
+3. **Plan prüfen:** Eine private Vorschau zeigt alle Kalenderwochen einschließlich Redraft und Playoffs. **Grunddaten ändern** und **Weitere Einstellungen ändern** führen zurück zu den vorausgefüllten Formularen. Erst **Season speichern** übernimmt den gesamten Plan. **Abbrechen** und das Schließen eines Modals speichern nichts.
 
-`playoffs_ab` wählt die erste K.-o.-Runde: Achtelfinale (`round-of-16`), Viertelfinale (`quarterfinal`), Halbfinale (`semifinal`, Standard) oder Finale (`final`). Alle folgenden Runden bis zum Finale werden ergänzt. Diese Option ist nur beim Playoff-Format zulässig; ohne explizites Format wählt sie automatisch Liga mit Playoffs. Es werden Rundenbezeichnungen und Termine verwaltet, kein automatischer Turnierbaum oder eine Qualifikation anhand von Ergebnissen.
+Das zweite Modal wird über einen Button geöffnet, weil Discord auf eine Modal-Absendung nicht direkt mit einem weiteren Modal antworten lässt. [Discord Interaction Responses](https://docs.discord.com/developers/interactions/receiving-and-responding#interaction-response-object-interaction-callback-type)
 
-`redraft:True` fügt eine Pause ein: vor den Playoffs oder zwischen Hin- und Rückrunde. Standard ist keine Pause. Eine reine Liga ohne folgende Spielphase erlaubt keinen Redraft. Bei neun regulären Spieltagen, Redraft und Halbfinale liegen Spieltag 9 in Woche 9, Redraft in Woche 10, Halbfinale in Woche 11 und Finale in Woche 12. Bei 18 Hin-/Rückrundenspieltagen liegen die Pause ebenfalls in Woche 10 und Spieltag 10 in Woche 11.
+Bei einer frischen Einrichtung sind Season 1, neun reguläre Spieltage und **Liga ohne Playoffs** vorbelegt; das Startdatum muss eingegeben werden. Redraft ist zunächst **Nein**, Playoffs beginnen zunächst mit dem **Halbfinale**. Bei einer Korrektur werden vorhandene Werte übernommen, einschließlich Redraft und Playoff-Start. Ein Wechsel zu einem Format ohne diese Optionen entfernt sie ausdrücklich im neuen Entwurf; die Vorschau zeigt das Ergebnis vor dem Speichern.
+
+Das Startdatum muss ein Montag sein; `TT.MM.JJJJ` und `JJJJ-MM-TT` werden akzeptiert. Jede spielbare Runde und die optionale Redraft-Pause dauern eine Woche, jeweils Montag bis Sonntag in `Europe/Berlin`. Der Wochenwechsel folgt dem Kalender und braucht keinen wöchentlichen Eingriff. Neustarts, Offline-Zeiten und Sommerzeit ändern daran nichts.
+
+**Format** bietet **Liga ohne Playoffs**, **Liga mit Playoffs** und **Hin- und Rückrunde ohne Playoffs**. Die Spieltagszahl zählt ausschließlich reguläre Spieltage, bei Hin-/Rückrunde beide Hälften zusammen: `18` bedeutet neun Hin- und neun Rückrundenspieltage. Dafür ist eine gerade Gesamtzahl erforderlich; die Nummerierung läuft von 1 bis 18 durch.
+
+**Erste Playoff-Runde** bietet Achtelfinale, Viertelfinale, Halbfinale oder Finale. Alle folgenden Runden bis zum Finale werden ergänzt. Es werden Rundenbezeichnungen und Termine verwaltet, kein automatischer Turnierbaum oder eine Qualifikation anhand von Ergebnissen.
+
+**Redraft: Ja** fügt eine Pause vor den Playoffs oder zwischen Hin- und Rückrunde ein. Bei neun regulären Spieltagen, Redraft und Halbfinale liegen Spieltag 9 in Woche 9, Redraft in Woche 10, Halbfinale in Woche 11 und Finale in Woche 12. Bei 18 Hin-/Rückrundenspieltagen liegen die Pause ebenfalls in Woche 10 und Spieltag 10 in Woche 11.
 
 Das Dropdown unterstützt höchstens 25 **spielbare** Runden insgesamt; Playoffs zählen dazu, die Redraft-Pause nicht. Ungültige Kombinationen werden vor dem Speichern abgewiesen. `/liga status` zeigt die aktuelle Runde beziehungsweise Redraft und die nächste Runde an. Vor Beginn ist die erste Runde vorausgewählt, nach dem Ende die letzte; der Status weist auf den noch ausstehenden Start beziehungsweise das Ende hin.
 
 Eine erneute Einrichtung ändert vorhandene Posts nicht. Neue Reports speichern ihre Rundenbezeichnung unabhängig vom aktiven Plan. Beim Seasonwechsel bleiben vorherige Einstellungen für historische Korrekturen erhalten. Ein während der Eingabe geänderter Rundenplan macht betroffene Formulare ungültig; sie müssen erneut geöffnet werden.
+
+Einrichtungsentwürfe sind an Server und Person gebunden und liegen bis zu 30 Minuten nur im Arbeitsspeicher. Ein neuer `/liga season`-Aufruf derselben Person auf demselben Server ersetzt ihren vorherigen Entwurf. Nach einem Bot-Neustart den Dialog erneut öffnen; gespeicherte Einstellungen bleiben erhalten. Vor dem Speichern wird die Verwaltungsberechtigung frisch geladen und die ursprüngliche Konfiguration auf zwischenzeitliche Änderungen geprüft. Eine ältere Vorschau überschreibt keine neueren Einstellungen anderer Verwalter. Bei Speicherfehlern bleiben die bisherigen Einstellungen erhalten; die Bestätigung kann nach Behebung erneut versucht werden.
 
 ### Ergebnis melden
 
@@ -261,24 +271,25 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 
 Beim Erstellen und Korrigieren gilt dieselbe Score-Prüfung: 1 bis 100 Zeichen und mindestens ein Zeichen, das kein Leerraum ist. Ungültige Eingaben führen zu einer privaten Rückmeldung, bevor ein Post oder Archiv-/Logeintrag verändert wird.
 
-| Dateien                                                          | Aufgabe                                                                                              |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `index.js`                                                       | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden                 |
-| `bot.js`                                                         | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups                 |
-| `startup.js`                                                     | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern                |
-| `interactions.js`                                                | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten                               |
-| `database.js`                                                    | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen                                      |
-| `match-store.js`, `league-settings.js`                           | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups                        |
-| `json-storage.js`                                                | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien |
-| `data-types.js`                                                  | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog         |
-| `season-rounds.js`                                               | Rundenplan, Playoff-Stufen, Rundenbezeichnungen, Auswahlprüfung und Rundenfilter                     |
-| `permissions.js`                                                 | Gemeinsame Rollenprüfung und handelnde Person                                                        |
-| `diagnostics.js`                                                 | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern                  |
-| `report-handler.js`, `reports.js`, `report-publisher.js`         | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus                                |
-| `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen                                                 |
-| `league-commands.js`, `audit-commands.js`                        | Verwaltung und Logdatei per DM                                                                       |
-| `search-commands.js`                                             | Replay-Suche                                                                                         |
-| `database-backups.js`, `data-backups.js`, `backup.js`            | SQLite- und ältere JSON-Sicherungen                                                                  |
+| Dateien                                                          | Aufgabe                                                                                                    |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `index.js`                                                       | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden                       |
+| `bot.js`                                                         | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups                       |
+| `startup.js`                                                     | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern                      |
+| `interactions.js`                                                | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten                                     |
+| `database.js`                                                    | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen                                            |
+| `match-store.js`, `league-settings.js`                           | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups                              |
+| `json-storage.js`                                                | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien       |
+| `data-types.js`                                                  | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog               |
+| `season-rounds.js`                                               | Rundenplan, Playoff-Stufen, Rundenbezeichnungen, Auswahlprüfung und Rundenfilter                           |
+| `season-setup.js`                                                | Private Einrichtungsdialoge, Vorausfüllung, Vorschau, Berechtigungs- und Konfliktprüfung vor dem Speichern |
+| `permissions.js`                                                 | Gemeinsame Rollenprüfung und handelnde Person                                                              |
+| `diagnostics.js`                                                 | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern                        |
+| `report-handler.js`, `reports.js`, `report-publisher.js`         | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus                                      |
+| `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen                                                       |
+| `league-commands.js`, `audit-commands.js`                        | Verwaltung und Logdatei per DM                                                                             |
+| `search-commands.js`                                             | Replay-Suche                                                                                               |
+| `database-backups.js`, `data-backups.js`, `backup.js`            | SQLite- und ältere JSON-Sicherungen                                                                        |
 
 Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
 

@@ -189,16 +189,16 @@ test("misconfiguring the everyone role never grants management or log access to 
   );
 });
 
-test("a manager role configures the league without ManageGuild, but a revoked role is rechecked", async () => {
+test("a manager role reads league status without ManageGuild, but a revoked role is rechecked", async () => {
   const f = setup({ roles: [MANAGER] });
   f.interaction.options = {
-    getSubcommand: () => "season",
+    getSubcommand: () => "status",
     getInteger: (key) => (key === "nummer" ? 4 : 10),
     getString: () => "19.10.2026",
   };
   let saved = 0;
   const settings = {
-    setSeason() {
+    get() {
       saved++;
       return { season: 4, currentMatchday: 1, matchdays: 10, startDate: "2026-10-19" };
     },

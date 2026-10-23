@@ -17,6 +17,7 @@ const { ReportPublisher } = require("./report-publisher");
 const { ReportManager } = require("./report-manager");
 const { createInteractionHandler } = require("./interactions");
 const { logFiles } = require("./audit-commands");
+const { configureSeason } = require("./test-helpers/season-setup");
 
 const GUILD = "300000000000000001",
   CHANNEL = "400000000000000001",
@@ -250,10 +251,11 @@ function setup(t) {
       now = new Date(date);
     },
     configure(values = {}) {
-      return command(
-        "liga",
-        {
-          subcommand: "season",
+      return configureSeason({
+        handle,
+        interaction,
+        user: ADMIN,
+        values: {
           nummer: 5,
           spieltage: 9,
           startdatum: "19.10.2026",
@@ -261,8 +263,7 @@ function setup(t) {
           redraft: true,
           ...values,
         },
-        ADMIN,
-      );
+      });
     },
     async report(round, link = "https://example.org/replay") {
       const opened = await command("report");

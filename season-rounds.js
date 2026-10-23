@@ -1,4 +1,9 @@
 const { createHash } = require("node:crypto");
+const FORMAT_NAMES = {
+  league: "Liga ohne Playoffs",
+  playoffs: "Liga mit Playoffs",
+  "home-away": "Hin- und Rückrunde ohne Playoffs",
+};
 
 const PLAYOFF_STAGES = ["round-of-16", "quarterfinal", "semifinal", "final"];
 const STAGE_NAMES = {
@@ -152,6 +157,7 @@ function roundChoices(matches, input) {
 }
 
 module.exports = {
+  FORMAT_NAMES,
   PLAYOFF_STAGES,
   STAGE_NAMES,
   leagueRound,
