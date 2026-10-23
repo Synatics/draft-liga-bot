@@ -1,11 +1,11 @@
 require("dotenv").config({ quiet: true });
-const { settingsFilePath, LeagueSettingsError } = require("./league-settings");
-const { DataBackups } = require("./data-backups");
-const { SqliteBackups } = require("./database-backups");
-const { DATABASE_NAME } = require("./database");
+const { settingsFilePath, LeagueSettingsError } = require("./src/storage/league-settings");
+const { DataBackups } = require("./src/storage/data-backups");
+const { SqliteBackups } = require("./src/storage/database-backups");
+const { DATABASE_NAME } = require("./src/storage/database");
 const { existsSync } = require("node:fs");
 const { dirname, join } = require("node:path");
-const { logError } = require("./diagnostics");
+const { logError } = require("./src/shared/diagnostics");
 
 try {
   const settingsPath = settingsFilePath();

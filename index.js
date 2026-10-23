@@ -1,5 +1,5 @@
-const { startBot } = require("./bot");
-const { failStartup } = require("./startup");
+const { startBot } = require("./src/app/bot");
+const { failStartup } = require("./src/app/startup");
 
 if (require.main === module) {
   require("dotenv").config({ quiet: true });

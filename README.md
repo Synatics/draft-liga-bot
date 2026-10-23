@@ -272,31 +272,39 @@ Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulie
 
 Beim Erstellen und Korrigieren gilt dieselbe Score-Prüfung: 1 bis 100 Zeichen und mindestens ein Zeichen, das kein Leerraum ist. Ungültige Eingaben führen zu einer privaten Rückmeldung, bevor ein Post oder Archiv-/Logeintrag verändert wird.
 
-| Dateien                                                          | Aufgabe                                                                                                    |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `index.js`                                                       | CLI-Einstieg: `.env` laden, Bot starten und bei Startfehlern mit Exit-Code 1 beenden                       |
-| `bot.js`                                                         | Separat aufrufbarer Start, Discord-Client, Teilnehmer-Cache und automatische Backups                       |
-| `startup.js`                                                     | Startprüfung, Befehlsregistrierung, Anmeldung und Ressourcenfreigabe bei Startfehlern                      |
-| `interactions.js`                                                | Befehlsliste, Routing von Interaktionen und gemeinsame Fehlerantworten                                     |
-| `database.js`                                                    | SQLite-Schema, JSON-Übernahme, Transaktionen und Audit-Abfragen                                            |
-| `match-store.js`, `league-settings.js`                           | Validierung und Speicherlogik; JSON-Kompatibilität für Übernahme/alte Backups                              |
-| `json-storage.js`                                                | Gemeinsames atomisches Schreiben einzelner JSON-Dokumente und Bereinigung eigener temporärer Dateien       |
-| `data-types.js`                                                  | Gemeinsame JSDoc-Datenstrukturen für Spieler, Reports, Season-Einstellungen und Änderungslog               |
-| `season-rounds.js`                                               | Rundenplan, Playoff-Stufen, Rundenbezeichnungen, Auswahlprüfung und Rundenfilter                           |
-| `season-setup.js`                                                | Private Einrichtungsdialoge, Vorausfüllung, Vorschau, Berechtigungs- und Konfliktprüfung vor dem Speichern |
-| `permissions.js`                                                 | Gemeinsame Rollenprüfung und handelnde Person                                                              |
-| `diagnostics.js`                                                 | Einheitliche Fehlerdiagnosen mit Fehlercodes, Ursachen und geprüften Kontextfeldern                        |
-| `report-handler.js`, `reports.js`, `report-publisher.js`         | Report-Verarbeitung, Formular, Spoiler und persistenter Versandstatus                                      |
-| `report-buttons.js`, `report-management.js`, `report-manager.js` | Buttons, Zugriffsprüfung, Korrekturen und Löschungen                                                       |
-| `league-commands.js`, `audit-commands.js`                        | Verwaltung und Logdatei per DM                                                                             |
-| `search-commands.js`                                             | Replay-Suche                                                                                               |
-| `database-backups.js`, `data-backups.js`, `backup.js`            | SQLite- und ältere JSON-Sicherungen                                                                        |
+### Projektstruktur
 
-Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
+```text
+index.js                   Bot starten
+backup.js                  Manuelle Datensicherung
+src/
+  app/                     Bot-Start und Verarbeitung der Interaktionen
+  league/                  Season-Einrichtung, Rundenplan, Status und Logabruf
+  reports/                 Report-Formulare, Ergebnisposts, Bearbeiten, Löschen und Suche
+  storage/                 SQLite, Validierung, JSON-Übernahme und Backups
+  shared/                  Berechtigungen, Fehlerdiagnosen und gemeinsame Datentypen
+tests/
+  *.test.js                Modul- und Integrationstests
+  helpers/                 Gemeinsame Testhelfer
+```
+
+| Bereich                    | Zuständigkeit                                                                                                                                                                                                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/`                 | `bot.js` erzeugt den Discord-Client und startet Hintergrundaufgaben. `startup.js` prüft Konfiguration und Speicher, registriert Befehle und meldet den Bot an. `interactions.js` verteilt Interaktionen an die Funktionen.                                                                                  |
+| `src/league/`              | `league-commands.js` und `audit-commands.js` verarbeiten Liga-Befehle und Logexporte. `season-setup.js` enthält den privaten Einrichtungsdialog, `season-rounds.js` den Wochenplan, Bezeichnungen und Rundenfilter.                                                                                         |
+| `src/reports/`             | `report-handler.js` verarbeitet neue Meldungen, `report-publisher.js` sichert den Versandstatus. `report-management.js` prüft und verarbeitet Korrekturen und Löschungen, `report-manager.js` führt sie mit Wiederanlauf aus. `search-commands.js` enthält die Replay-Suche.                                |
+| `src/reports/report-ui.js` | Gemeinsame Formulare, Eingabeprüfung, Spoiler-Embeds und Report-Buttons einschließlich ihrer Ergänzung an älteren Posts. Die bisher getrennten Darstellungs- und Button-Module sind hier zusammengeführt.                                                                                                   |
+| `src/storage/`             | `database.js` verwaltet SQLite, Migrationen und Transaktionen. `match-store.js` und `league-settings.js` validieren und speichern Reports und Seasons. `json-storage.js` schreibt ältere JSON-Dokumente atomar. `database-backups.js` und `data-backups.js` erstellen SQLite- bzw. ältere JSON-Sicherungen. |
+| `src/shared/`              | `permissions.js` prüft Rollen, Kanalzugriff und Thread-Mitgliedschaften. `diagnostics.js` erstellt sichere technische Fehlerprotokolle. `data-types.js` beschreibt gemeinsame Datenstrukturen mit JSDoc.                                                                                                    |
+| `tests/`                   | Die Tests liegen getrennt vom Laufzeitcode. `integration.test.js` und `season-flow.test.js` prüfen zusammenhängende Abläufe; `helpers/` enthält wiederverwendbare Testhelfer.                                                                                                                               |
+
+Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `src/app/bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
 
 Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
 
-Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Runde, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der regulären Spieltage, Startdatum und gegebenenfalls den Wochenplan; die aktuelle Runde wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit ausschließlich einem numerischen Spieltag bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
+Der Standard-Datenordner bleibt `data/` im Projektverzeichnis. `DATA_DIR`, Railway-Volumes und die bestehenden SQLite-/JSON-Dateien werden durch die Quelltextstruktur nicht verschoben; für dieses Aufräumen ist keine Datenmigration nötig.
+
+Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `src/shared/data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Runde, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der regulären Spieltage, Startdatum und gegebenenfalls den Wochenplan; die aktuelle Runde wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit ausschließlich einem numerischen Spieltag bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
 
 Beide Speicher aktualisieren ihren Zustand erst nach erfolgreichem Schreiben. SQLite speichert Report und zugehörigen Logeintrag weiterhin in derselben Transaktion. Die JSON-Kompatibilität verwendet eine gemeinsame Hilfsfunktion: Sie schreibt in eine exklusiv angelegte temporäre Datei im Zielordner und ersetzt danach die Zieldatei per Umbenennung. Bei Fehlern bleibt der vorherige Stand erhalten; die Bereinigung entfernt nur die selbst angelegte temporäre Datei. Schlägt auch die Bereinigung fehl, bleiben beide Fehlerursachen für die Diagnose verfügbar. Datenformat und Konfiguration ändern sich dadurch nicht.
 
