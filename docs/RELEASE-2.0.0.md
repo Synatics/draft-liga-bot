@@ -35,46 +35,50 @@ Gewinner, Verlierer und Score bleiben im Ergebnispost hinter Spoilern verborgen.
 
 ---
 
-**Bot 2.0 – Kurzanleitung für Teilnehmer**
+**Bot 2.0 – bitte wenigstens einmal lesen**
 
-Starte die Befehle auf dem Liga-Server über die Slash-Auswahl. Bei Spielernamen einen passenden Vorschlag auswählen.
+Befehle im Liga-Server über Discords Vorschläge starten. Beispiele mit euren Angaben ausfüllen. Der Bot kann viel, Gedankenlesen gehört noch nicht dazu.
 
-**Ergebnis melden**
+**1. Ergebnis melden – `/report`**
 
-`/report`
-Runde, Gewinner und Verlierer auswählen, Ergebnis wie `2-0` und Replay-Link eintragen, absenden. Der Post erscheint im verwendeten Kanal. Die Season wird automatisch zugeordnet; für Nachholspiele einfach die passende Runde wählen.
+Im Ergebniskanal starten. Öffnet ein Formular. **Alle fünf Felder sind Pflicht:**
 
-**Fehler korrigieren**
+- **Runde:** den richtigen Spieltag bzw. die passende Playoff-Runde auswählen.
+- **Gewinner:** wer gewonnen hat. Wirklich der Gewinner.
+- **Verlierer:** die andere Person.
+- **Ergebnis:** z. B. `2-0`.
+- **Replay Link:** vollständigen Link einfügen.
 
-Unter deinem Ergebnispost auf **Bearbeiten** klicken. Runde, Spieler, Ergebnis oder Link anpassen und absenden. Der vorhandene Post und sein Suchtreffer werden aktualisiert. Die Season bleibt erhalten.
+Die Season übernimmt der Bot. Die aktuelle Runde ist normalerweise vorausgewählt. Bei Nachholspielen bitte umstellen!
 
-Du kannst selbst gemeldete Reports bearbeiten, solange du die Teilnehmerrolle hast. Die Ligaverwaltung kann alle Reports bearbeiten und als einzige löschen.
+**2. Replays suchen – `/suchen`**
 
-**Replays finden**
+**Pflicht:** `season` = Season-Nummer und `name` = gesuchter Spieler. Namen aus den Vorschlägen auswählen.
 
 `/suchen season:4 name:Jan`
 Alle gespeicherten Replays von Jan aus Season 4.
 
+**Optional:** `spieltag` = Zahl, z. B. `3`. Oder `runde` = eine Runde aus den Vorschlägen, z. B. **Playoffs · Halbfinale**. Beides leer lassen = ganze Season. **Nicht beide ausfüllen.**
+
 `/suchen season:4 name:Jan spieltag:3`
-Nur Spieltag 3. Für Playoffs stattdessen das optionale Feld `runde` verwenden und z. B. **Playoffs · Halbfinale** auswählen. `spieltag` und `runde` nicht gemeinsam verwenden.
+Nur Spieltag 3. Treffer kommen per DM: Runde, Teilnehmer, Replay-Link. Alte Chatposts werden nicht nachträglich eingelesen.
 
-Season und Name sind Pflicht. Die DM enthält Runde, beide Teilnehmer und Replay-Link, ohne Score oder Gewinnerangabe.
+**3. Wo sind wir gerade? – `/liga status`**
 
-**Aktuelle Runde ansehen**
+Keine weiteren Angaben. Zeigt die aktuelle Season und Runde bzw. Redraft.
 
-`/liga status`
-Zeigt die aktuelle Season und Runde, gegebenenfalls die Redraft-Woche.
+**4. Wer hat was geändert? – `/liga log`**
 
-**Änderungen nachlesen**
+**Pflicht:** `season` = gewünschte Season-Nummer.
 
 `/liga log season:4`
-Schickt dir das Änderungsprotokoll dieser Season als Datei per DM. Die Season muss angegeben werden. Die Datei enthält auch Gewinner und Ergebnisse.
+Änderungsprotokoll von Season 4 als Datei per DM. **Enthält auch Ergebnisse.**
 
-**Gut zu wissen**
+**Vertippt?**
 
-- Für diese Funktionen brauchst du die Teilnehmer- oder Ligaverwaltungsrolle.
-- Suche und Logs berücksichtigen deinen Kanalzugriff. Ältere Discord-Posts werden nicht automatisch ins Archiv übernommen.
-- Erlaube DMs von Servermitgliedern. Bereits zugestellte DMs und Dateien bleiben erhalten, werden später aber nicht automatisch aktualisiert. Bei Bedarf neu abrufen.
+Unter deinem selbst gemeldeten Report auf **Bearbeiten** klicken, korrigieren, absenden. Die Season bleibt gleich. Löschen übernimmt die Ligaverwaltung.
+
+**Keine DM bekommen?** DMs von Servermitgliedern erlauben und den Bot nicht blockieren. Er kommt nicht persönlich vorbei.
 
 ---
 
