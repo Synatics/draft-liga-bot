@@ -1,335 +1,350 @@
-# Draft-Liga-Bot
+# Draft Liga Ergebnisse Bot
 
-Ein selbst gehosteter Discord-Bot für Pokémon-Draft-Ligen. Er veröffentlicht Match-Ergebnisse mit Spoilern, ordnet sie einer Season und einem Spieltag zu und stellt gespeicherte Replay-Links über eine Suche per Direktnachricht bereit.
+Ein selbst gehosteter Discord-Bot für Pokémon-Draft-Ligen. Ergebnisse bleiben hinter Spoilern, Replays lassen sich nach Season und Spieler suchen, und Änderungen sind über eine Logdatei nachvollziehbar. Die Oberfläche ist deutsch.
 
-Der Bot verwendet Node.js, CommonJS und discord.js 14. Liga-Einstellungen und Replay-Metadaten liegen in lokalen JSON-Dateien. Eine externe Datenbank oder ein HTTP-Server ist nicht erforderlich; die Verbindung zu Discord läuft über den Gateway und die REST-API.
+Für die Veröffentlichung auf Discord: [Patch Notes und Kurzanleitung für Version 2.0](docs/RELEASE-2.0.0.md). Die drei durch Trennlinien getrennten Abschnitte sind jeweils als eigene Nachricht gedacht.
 
 ## Funktionen
 
-- **Ergebnisse melden:** `/report` öffnet ein Modal mit Dropdowns für Spieltag, Gewinner und Verlierer sowie Eingabefeldern für Score und Replay-Link.
-- **Teilnehmer aus einer Rolle:** Die Auswahl verwendet aktuelle Servermitglieder mit einer konfigurierten Rolle. Bots werden ausgeschlossen, Namen alphabetisch sortiert und Personen intern über Discord-IDs zugeordnet.
-- **Spoiler im Ergebnispost:** Season und Spieltag erscheinen über dem Match-Titel. Gewinner, Verlierer und Score sind verborgen; die Reihenfolge der Namen im Titel wird unabhängig vom Gewinner zufällig gewählt.
-- **Automatische Spieltage:** Eine Season wird einmal mit Startmontag und Anzahl der Spieltage eingerichtet. Der aktuelle Spieltag folgt dem Kalender in `Europe/Berlin`.
-- **Replay-Suche:** `/suchen` filtert nach Season, Spieler und optional Spieltag. Die Treffer kommen als normale DMs mit Spieltag, Teilnehmern und Replay-Link.
-- **Dauerhafte Speicherung:** Konfiguration und Archiv bleiben bei Neustarts erhalten, sofern das Datenverzeichnis auf persistentem Speicher liegt.
+- `/report`: Modal mit Runde, Gewinner, Verlierer, Score und Replay-Link. Die Spieler stammen aus den Server-Anzeigenamen einer konfigurierten Teilnehmerrolle.
+- Automatischer Seasonplan: Liga, Liga mit Playoffs oder Hin-/Rückrunde, jeweils mit optionaler Redraft-Woche zwischen Spielphasen. Der Wochenwechsel erfolgt montags um 00:00 Uhr in `Europe/Berlin`, einschließlich Sommerzeitwechseln.
+- Ergebnisposts mit Season und Runde, Spoilern für Gewinner/Verlierer/Score und zufälliger Reihenfolge der Namen im Titel.
+- **Bearbeiten** und **Löschen** als Buttons direkt unter dem Ergebnispost. Keine zusätzlichen Rechtsklick-/Apps-Aktionen.
+- `/suchen`: Replay-Links mit Runde und Teilnehmern als normale, dauerhaft sichtbare DMs.
+- `/liga log season:…`: Lesbares Änderungsprotokoll genau einer Season als `.txt`-Datei per DM. Die Season ist verpflichtend.
+- `/report-entfernen`: Archivbereinigung auch bei bereits gelöschtem Discord-Post, ohne Nachrichtenlink.
+- SQLite für Einstellungen, Reports, Melder, Ergebnisse, Versandvormerkungen und Änderungshistorie. Bestehende JSON-Daten werden einmalig übernommen.
+- Tägliche Datenbanksicherungen mit 14 Kopien sowie zusätzliche manuelle Backups.
 
 ## Voraussetzungen
 
-- [Node.js](https://nodejs.org/en/download), empfohlen **Node.js 24 LTS**, und npm. Für den Betrieb eine noch unterstützte LTS-Version verwenden; siehe [Node.js Release-Status](https://nodejs.org/en/about/previous-releases).
-- Git zum Klonen des Repositories.
-- Eine eigene Discord-Anwendung mit Bot-Token und Zugang zu einem Discord-Server für die Installation.
-- Mindestens zwei menschliche Liga-Teilnehmer mit einer gemeinsamen Teilnehmerrolle.
-- Ein beschreibbares, für dauerhaften Betrieb persistentes Datenverzeichnis.
+- **Node.js 24 LTS** und npm. `package.json`, `.nvmrc` und `.npmrc` legen die Reihe 24 fest. `engine-strict` verhindert eine Installation mit unpassender Version; `npm start` wechselt die Laufzeit nicht automatisch.
+- Eine eigene Discord-Anwendung mit Bot und einem Server für die Installation.
+- Dauerhafter Speicher; auf Railway ist ein Volume erforderlich.
+- Eine laufende Bot-Instanz pro Datenverzeichnis.
 
-Die aktuelle Teilnehmerkonfiguration enthält **eine Rollen-ID pro Bot-Instanz**. Die Einrichtung ist deshalb auf einen Liga-Server pro Instanz ausgelegt. Einstellungen und Archiv sind intern zusätzlich nach Server-ID getrennt.
+SQLite verwendet das eingebaute Modul `node:sqlite`. Ein zusätzlicher Datenbankdienst, ein SQLite-CLI-Programm oder native npm-Erweiterungen sind nicht erforderlich. [Node.js SQLite](https://nodejs.org/api/sqlite.html)
 
-## Installation
+## Discord einrichten
 
-### 1. Discord-Anwendung erstellen und installieren
+1. Im [Developer Portal](https://discord.com/developers/applications) eine Anwendung mit Bot anlegen und Token sowie Application-ID notieren.
+2. Unter **Bot → Privileged Gateway Intents** den **Server Members Intent** aktivieren. Der Bot verwendet `Guilds` und `GuildMembers`; Message Content Intent ist nicht erforderlich.
+3. Die Anwendung mit den Scopes **`bot`** und **`applications.commands`** auf dem Server installieren.
+4. Eine bestehende Teilnehmerrolle auswählen und ihre ID kopieren. Dafür unter **Erweitert** den Entwicklermodus aktivieren.
+5. Eine separate Rolle für die Ligaverwaltung anlegen und deren ID kopieren.
 
-Im [Discord Developer Portal](https://discord.com/developers/applications) eine Anwendung anlegen und konfigurieren:
+Der Bot benötigt in Ergebniskanälen **Kanal anzeigen**, **Nachrichten senden**, **Links einbetten** und **Nachrichtenverlauf anzeigen**. Bei Threads sind Zugriff und die passenden Thread-Senderechte nötig. Administrator, Rollenverwaltung und das Verwalten fremder Nachrichten werden nicht benötigt. Kanal-Overrides gelten zusätzlich. [Discord-Berechtigungen](https://docs.discord.com/developers/topics/permissions)
 
-1. Unter **General Information** die **Application ID** kopieren. Sie wird später als `CLIENT_ID` verwendet.
-2. Unter **Bot** ein Bot-Token erstellen bzw. über **Reset Token** erzeugen. Dieses Token wird als `DISCORD_TOKEN` hinterlegt. Es ist weder der Client Secret noch der Public Key.
-3. Unter **Bot → Privileged Gateway Intents** den **Server Members Intent** aktivieren. Der Bot fordert `Guilds` und `GuildMembers` an. Message Content Intent und Presence Intent werden nicht benötigt.
-4. Unter **Installation** den Kontext **Guild Install** aktivieren und für die Serverinstallation die Scopes **`bot`** und **`applications.commands`** auswählen.
-5. Dem Bot die unten aufgeführten Kanalrechte geben und ihn über den Installationslink dem gewünschten Server hinzufügen.
+Die **Ligaverwaltungsrolle** benötigt keine besonderen Serverrechte. Ihre Mitglieder brauchen Zugriff auf die Ergebniskanäle und deren Verlauf sowie die Freigabe für Anwendungsbefehle. Der Bot erkennt die Rolle anhand ihrer ID. Sie muss von der Teilnehmerrolle verschieden sein. Auch Personen mit „Server verwalten“ oder Administrator benötigen diese Rolle für Verwaltungsaktionen im Bot.
 
-Der Bot wird als Server-App installiert. Eine reine Installation zum persönlichen Account ersetzt diese Serverinstallation nicht. Ein Interactions Endpoint oder eine öffentliche URL muss für dieses Projekt nicht eingerichtet werden.
-
-| Bot-Berechtigung | Verwendung |
-| --- | --- |
-| View Channel / Kanal anzeigen | Zugriff auf den Kanal für Ergebnisposts |
-| Send Messages / Nachrichten senden | Ergebnisposts veröffentlichen |
-| Embed Links / Links einbetten | Ergebnis als Embed anzeigen |
-| Send Messages in Threads / Nachrichten in Threads senden | Zusätzlich erforderlich, wenn Ergebnisse in Threads gepostet werden sollen |
-
-Die Rechte müssen auch in den konkreten Kanälen erlaubt sein; Kanal-Overrides können die Serverrechte überschreiben. Administrator- und Rollenverwaltungsrechte benötigt der Bot nicht. Er liest die Teilnehmerrolle, weist sie aber niemandem selbst zu.
-
-Weiterführend: [Discord-App einrichten](https://docs.discord.com/developers/quick-start/getting-started), [Gateway Intents](https://docs.discord.com/developers/events/gateway#privileged-intents), [Discord-Berechtigungen](https://docs.discord.com/developers/topics/permissions).
-
-### 2. Teilnehmerrolle vorbereiten
-
-1. Auf dem Liga-Server eine Rolle wie **Liga-Teilnehmer** anlegen oder eine bestehende verwenden.
-2. Diese Rolle allen Personen geben, die im Ergebnisformular auswählbar sein sollen. Die Rolle `@everyone` ist dafür nicht geeignet.
-3. In Discord unter **Benutzereinstellungen → Erweitert** den Entwicklermodus aktivieren.
-4. Auf die Rolle rechtsklicken und **Rollen-ID kopieren** auswählen. Diese ID wird als `PARTICIPANT_ROLE_ID` hinterlegt; nicht den Rollennamen eintragen.
-5. Optional die Server-Spitznamen auf die gewünschten Liga-Namen setzen. Ohne Spitznamen verwendet der Bot den Discord-Anzeigenamen.
-
-Die Auswahl unterstützt **2 bis 25 Teilnehmer**. Bei identischen Namen ergänzt das Formular den Accountnamen zur Unterscheidung. Rollen- und Namensänderungen werden über die Mitgliederereignisse übernommen. Für eine neue Season reicht es, Personen zur bestehenden Rolle hinzuzufügen oder sie zu entfernen; eine Namensliste im Code gibt es nicht.
-
-### 3. Repository klonen und Abhängigkeiten installieren
-
-```sh
-git clone https://github.com/Synatics/draft-liga-bot.git
-cd draft-liga-bot
-npm ci
-```
-
-`npm ci` installiert die im Lockfile festgelegten Abhängigkeiten.
-
-### 4. Umgebungsvariablen konfigurieren
-
-Die Datei [`.env.example`](.env.example) im Projektverzeichnis nach `.env` kopieren.
-
-**Windows / PowerShell:**
+## Installation und Konfiguration
 
 ```powershell
+git clone https://github.com/Synatics/draft-liga-bot.git
+cd draft-liga-bot
+git switch codex/verbesserungen
+```
+
+Node.js 24 aktivieren. Mit eingerichtetem NVM for Windows beispielsweise:
+
+```powershell
+nvm install 24
+nvm use 24
+node --version
+npm ci
 Copy-Item .env.example .env
 ```
 
-**Linux / macOS:**
-
-```sh
-cp .env.example .env
-```
-
-Anschließend die Platzhalter in `.env` ersetzen:
+Unter Linux/macOS entsprechend `cp .env.example .env` verwenden. Anschließend die Werte in `.env` setzen:
 
 ```dotenv
 DISCORD_TOKEN=dein-bot-token
 CLIENT_ID=deine-application-id
 PARTICIPANT_ROLE_ID=deine-teilnehmerrollen-id
-
-# Optional: anderer Datenordner
+LEAGUE_MANAGER_ROLE_ID=deine-ligaverwaltungsrollen-id
 # DATA_DIR=./data
 ```
 
-| Variable | Pflicht | Beschreibung |
-| --- | --- | --- |
-| `DISCORD_TOKEN` | Ja | Bot-Token der eigenen Discord-Anwendung |
-| `CLIENT_ID` | Ja | Application ID derselben Anwendung; muss zum Token passen |
-| `PARTICIPANT_ROLE_ID` | Ja, für `/report` | ID der Teilnehmerrolle auf dem Liga-Server |
-| `DATA_DIR` | Nein | Verzeichnis für beide JSON-Dateien; relative Pfade beziehen sich auf das Arbeitsverzeichnis des Prozesses |
-| `RAILWAY_VOLUME_MOUNT_PATH` | Automatisch auf Railway | Von Railway gesetzter Mount-Pfad des verbundenen Volumes |
-| `RAILWAY_ENVIRONMENT_ID` | Automatisch auf Railway | Aktiviert die Prüfung, dass ein Railway-Volume vorhanden ist und `DATA_DIR` darin liegt |
+| Variable                    | Bedeutung                                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`             | Pflichtwert: Bot-Token ohne `Bot`-Präfix                                                                    |
+| `CLIENT_ID`                 | Pflichtwert: Application-ID desselben Bots                                                                  |
+| `PARTICIPANT_ROLE_ID`       | Pflichtwert: Rolle für Spielernamen, Reports, das Bearbeiten eigener Reports, Suche, Status und Logabruf    |
+| `LEAGUE_MANAGER_ROLE_ID`    | Separate Verwaltungsrolle; ohne Wert sind Season-Einrichtung, fremde Korrekturen und Löschaktionen gesperrt |
+| `DATA_DIR`                  | Optional: Datenverzeichnis; lokal standardmäßig `./data`, auf Railway der Volume-Mount                      |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Von Railway bereitgestellter Mount-Pfad                                                                     |
+| `RAILWAY_ENVIRONMENT_ID`    | Aktiviert die Railway-Volume-Prüfung                                                                        |
 
-Vom Hosting gesetzte Umgebungsvariablen können anstelle einer `.env` verwendet werden. Token und echte `.env`-Dateien gehören nicht ins Repository. `.env` und `data/` sind bereits von Git ausgeschlossen.
+Discord-IDs müssen 17–20 Ziffern haben. Ein gesetzter, ungültiger Rollenwert verhindert den Start. `.env`, Datenbank und Backups gehören nicht ins Repository.
 
-### 5. Bot starten
-
-```sh
+```powershell
 npm start
 ```
 
-Der Start erfolgt über `node index.js`. Eine erfolgreiche Discord-Verbindung und eine erfolgreiche Befehlsregistrierung werden getrennt protokolliert:
+Beim Start werden Konfiguration, Schreibzugriff, SQLite und gegebenenfalls die JSON-Übernahme geprüft. Danach registriert der Bot `/report`, `/liga`, `/suchen` und `/report-entfernen` **global für diese Anwendung**. Dabei werden die früheren Rechtsklick-Aktionen entfernt. Registrierung und Anmeldung haben zusammen ein Zeitlimit von 60 Sekunden. Startfehler führen zu Exit-Code 1; Token und rohe Discord-Request-Daten werden nicht als Startfehlermeldung ausgegeben.
+
+Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine eigene Discord-Anwendung verwenden. Ein separates Deploy-Commands-Skript ist nicht nötig. Bei veralteten Optionen Discord mit Strg+R bzw. im Browser mit F5 neu laden.
+
+## Berechtigungen im Bot
+
+| Aktion               | Freigabe                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `/report`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| `/suchen`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| Report bearbeiten    | Gespeicherte meldende Person mit aktueller Teilnehmerrolle oder Ligaverwaltungsrolle |
+| Report löschen       | Nur Ligaverwaltungsrolle                                                             |
+| `/report-entfernen`  | Nur Ligaverwaltungsrolle                                                             |
+| `/liga season`       | Nur Ligaverwaltungsrolle                                                             |
+| `/liga status`       | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| `/liga log season:…` | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+
+Die andere am Match beteiligte Person bekommt dadurch keine Bearbeitungsrechte. Die Melder-ID wird bei der ersten Meldung gespeichert und bleibt bei Korrekturen erhalten. Ein erneut gemeldetes Duplikat überträgt diese Zuordnung nicht.
+
+Die Buttons sind für alle gleich sichtbar. Beim Öffnen eines Modals prüft der Bot die mit der Interaktion übermittelten Rollen; beim Absenden und vor der endgültigen Änderung lädt er die handelnde Person frisch. Entzogene Rollen werden berücksichtigt. Verwaltungsaktionen erfordern ausschließlich die konfigurierte Ligaverwaltungsrolle; Discord-Serverrechte ersetzen diese Freigabe nicht. Suche, Suchvorschläge, Status und Logabruf prüfen die aktuellen Rollen ebenfalls. Für Reports, Suche, Bearbeiten und Löschen werden zusätzlich Kanal- und Verlaufszugriff frisch geprüft. Bei privaten Threads wird die aktuelle Mitgliedschaft oder `ManageThreads` anhand des frisch geladenen Mitglieds geprüft. Veraltete Formulare und Bestätigungen werden abgewiesen.
+
+`/liga` ist als Gruppe für Teilnehmer sichtbar, damit sie `status` und `log` verwenden können. Der Verwaltungs-Unterbefehl `season` wird im Bot gesondert gesperrt. Discord-Integrationsregeln dürfen nicht die gesamte Gruppe ausschließlich auf Admins beschränken, wenn Teilnehmer Status und Protokoll abrufen sollen.
+
+## Befehle und Bedienung
+
+Alle Slash-Befehle werden auf dem Liga-Server gestartet. Beispiele zeigen ausgewählte Befehle mit ausgefüllten Optionen; eine als normale Chatnachricht eingefügte Zeile führt keinen Befehl aus.
+
+### Season einrichten
 
 ```text
-✅ Bot ist mit Discord verbunden.
-✅ Slash-Befehle bei Discord registriert: /report, /liga, /suchen
-```
-
-Die Reihenfolge der Meldungen kann variieren. Beim Start lädt der Bot einmal die Servermitglieder, damit `/report` das Modal anschließend ohne zusätzliche Ladezeit öffnen kann.
-
-Alle Slash-Befehle werden bei jedem Start **global für die Anwendung registriert**. Dabei ersetzt der Bot die globale Befehlsliste dieser Anwendung durch `/report`, `/liga` und `/suchen`. Für dieses Projekt sollte daher eine eigene Discord-Anwendung verwendet werden. Ein separates Deploy-Commands-Skript ist nicht nötig.
-
-### 6. Erste Season einrichten
-
-Auf dem Liga-Server den Slash-Befehl auswählen und seine Optionen ausfüllen:
-
-```text
-/liga season nummer:4 spieltage:9 startdatum:19.10.2026
-```
-
-Dieses Beispiel richtet Season 4 mit neun Spieltagen ab Montag, dem 19.10.2026, ein. Vor dem ersten `/report` muss die Season eingerichtet sein.
-
-Danach ein Match mit `/report` melden und dessen Replay mit `/suchen` abrufen. Ein Neustart darf die Season-Einstellungen und Suchtreffer nicht entfernen.
-
-## Befehle
-
-Alle Befehle werden **in einem Serverkanal** ausgeführt. `/suchen` liefert seine Treffer anschließend per DM; es wird nicht in der DM gestartet. Die folgenden Beispiele zeigen die Optionen eines Slash-Befehls. Eine als normale Chatnachricht eingefügte Beispielzeile führt ihn nicht aus.
-
-| Befehl | Zweck | Zugriffsanforderung |
-| --- | --- | --- |
-| `/report` | Ergebnisformular öffnen und im aktuellen Kanal posten | Anwendungsbefehle im Kanal verwenden dürfen; eingerichtete Season und Teilnehmerrolle |
-| `/liga season` | Season einrichten oder Konfiguration korrigieren | Server verwalten (`ManageGuild`) |
-| `/liga status` | Aktuelle Season, Spieltag und Startdatum anzeigen | Server verwalten (`ManageGuild`) |
-| `/suchen` | Gespeicherte Replays eines Spielers per DM abrufen | Anwendungsbefehle verwenden dürfen; lesbare Ergebnis-Kanäle und zustellbare DMs |
-
-Der Aufruf von `/report` oder `/suchen` ist im Code nicht auf Personen mit Teilnehmerrolle beschränkt. Die Rolle bestimmt, welche Personen als Spieler für ein neues Match ausgewählt werden können. Zusätzliche Einschränkungen lassen sich über Discord-Kanal- und Integrationsrechte konfigurieren.
-
-### `/report`
-
-Das Modal enthält fünf Pflichtfelder:
-
-| Feld | Verhalten |
-| --- | --- |
-| Spieltag | Aktueller Spieltag vorausgewählt; jeder Spieltag der konfigurierten Season auswählbar |
-| Gewinner | Dropdown mit menschlichen Mitgliedern der Teilnehmerrolle |
-| Verlierer | Dieselbe Teilnehmerauswahl; muss eine andere Person sein |
-| Ergebnis | Freitext, z. B. `2-0`, maximal 100 Zeichen; kein festes Score-Format erzwungen |
-| Replay Link | Ein gültiger `http://`- oder `https://`-Link, maximal 1024 Zeichen nach URL-Normalisierung |
-
-Der Link muss keine bestimmte Replay-Domain verwenden. Der Bot prüft URL-Format und Länge, ruft das Replay aber nicht ab und verifiziert weder dessen Inhalt noch den angegebenen Score.
-
-Beim Absenden werden die ausgewählten Mitglieder erneut geladen und auf Serverzugehörigkeit, Teilnehmerrolle und Bot-Status geprüft. Ein Formular aus einer inzwischen gewechselten Season wird abgewiesen. Der ausgewählte Spieltag bleibt auch bei Nachholspielen erhalten.
-
-Der Ergebnispost wird im **Kanal des Befehlsaufrufs** veröffentlicht. Die Bestätigung ist nur für die meldende Person sichtbar. Die öffentliche Nachricht enthält Season, Spieltag, beide Namen und Replay-Link; Gewinner, Verlierer und Score sind mit Discord-Spoilern markiert.
-
-### `/liga season` und `/liga status`
-
-```text
-/liga season nummer:4 spieltage:9 startdatum:19.10.2026
+/liga season
 /liga status
 ```
 
-| Option von `/liga season` | Werte |
-| --- | --- |
-| `nummer` | Ganze Zahl von 1 bis 9999 |
-| `spieltage` | Ganze Zahl von 1 bis 25 |
-| `startdatum` | Reales Kalenderdatum als `TT.MM.JJJJ` oder `JJJJ-MM-TT`; muss ein Montag sein |
+`/liga season` hat keine zusätzlichen Slash-Parameter mehr. Der geführte Dialog ist privat:
 
-Die Konfiguration gilt pro Discord-Server und wird sofort gespeichert. `/liga season` kann auch zur Korrektur von Startdatum oder Spieltaganzahl erneut ausgeführt werden. Bestehende Archiv-Einträge und Discord-Posts werden dadurch nicht verändert. Für eine neue Season eine neue Season-Nummer verwenden.
+1. **Grunddaten:** Season-Nummer, reguläre Spieltage insgesamt, Startdatum und Format auswählen. Bei einer bestehenden Season sind die gespeicherten Werte vorausgefüllt. Nummer beibehalten zum Korrigieren, eine neue Nummer für eine neue Season verwenden.
+2. **Weitere Einstellungen:** Für Playoffs und Hin-/Rückrunde öffnet der private **Weiter**-Button ein zweites Modal. Dort Redraft als **Ja/Nein** wählen; beim Playoff-Format zusätzlich die erste Playoff-Runde festlegen. Eine reine Liga benötigt nur das erste Modal.
+3. **Plan prüfen:** Eine private Vorschau zeigt alle Kalenderwochen einschließlich Redraft und Playoffs. **Grunddaten ändern** und **Weitere Einstellungen ändern** führen zurück zu den vorausgefüllten Formularen. Erst **Season speichern** übernimmt den gesamten Plan. **Abbrechen** und das Schließen eines Modals speichern nichts.
 
-**Berechnung des Spieltags:**
+Das zweite Modal wird über einen Button geöffnet, weil Discord auf eine Modal-Absendung nicht direkt mit einem weiteren Modal antworten lässt. [Discord Interaction Responses](https://docs.discord.com/developers/interactions/receiving-and-responding#interaction-response-object-interaction-callback-type)
 
-- Startmontag bis Sonntag: Spieltag 1; ab dem nächsten Montag: Spieltag 2 usw.
-- Maßgeblich ist `Europe/Berlin`, unabhängig von der Zeitzone des Hostsystems.
-- Kalenderwochen werden anhand von lokalen Kalenderdaten berechnet; die Sommerzeitumstellung verschiebt den Wochenwechsel nicht.
-- Der Spieltag wird beim Öffnen des Formulars bzw. bei `/liga status` berechnet. Ein wöchentlicher Hintergrundjob ist nicht nötig.
-- Vor dem Start wird Spieltag 1 vorausgewählt, nach Season-Ende der letzte Spieltag.
-- Der Bot startet keine nächste Season selbstständig. Diese wird einmal per `/liga season` eingerichtet.
+Bei einer frischen Einrichtung sind Season 1, neun reguläre Spieltage und **Liga ohne Playoffs** vorbelegt; das Startdatum muss eingegeben werden. Redraft ist zunächst **Nein**, Playoffs beginnen zunächst mit dem **Halbfinale**. Bei einer Korrektur werden vorhandene Werte übernommen, einschließlich Redraft und Playoff-Start. Ein Wechsel zu einem Format ohne diese Optionen entfernt sie ausdrücklich im neuen Entwurf; die Vorschau zeigt das Ergebnis vor dem Speichern.
 
-Ältere Einstellungsdateien mit manuellem `currentMatchday` bleiben lesbar. Einmal `/liga season` mit Startdatum ausführen, um diese auf die Wochenberechnung umzustellen.
+Das Startdatum muss ein Montag sein; `TT.MM.JJJJ` und `JJJJ-MM-TT` werden akzeptiert. Jede spielbare Runde und die optionale Redraft-Pause dauern eine Woche, jeweils Montag bis Sonntag in `Europe/Berlin`. Der Wochenwechsel folgt dem Kalender und braucht keinen wöchentlichen Eingriff. Neustarts, Offline-Zeiten und Sommerzeit ändern daran nichts.
 
-### `/suchen`
+**Format** bietet **Liga ohne Playoffs**, **Liga mit Playoffs** und **Hin- und Rückrunde ohne Playoffs**. Die Spieltagszahl zählt ausschließlich reguläre Spieltage, bei Hin-/Rückrunde beide Hälften zusammen: `18` bedeutet neun Hin- und neun Rückrundenspieltage. Dafür ist eine gerade Gesamtzahl erforderlich; die Nummerierung läuft von 1 bis 18 durch.
+
+**Erste Playoff-Runde** bietet Achtelfinale, Viertelfinale, Halbfinale oder Finale. Alle folgenden Runden bis zum Finale werden ergänzt. Es werden Rundenbezeichnungen und Termine verwaltet, kein automatischer Turnierbaum oder eine Qualifikation anhand von Ergebnissen.
+
+**Redraft: Ja** fügt eine Pause vor den Playoffs oder zwischen Hin- und Rückrunde ein. Bei neun regulären Spieltagen, Redraft und Halbfinale liegen Spieltag 9 in Woche 9, Redraft in Woche 10, Halbfinale in Woche 11 und Finale in Woche 12. Bei 18 Hin-/Rückrundenspieltagen liegen die Pause ebenfalls in Woche 10 und Spieltag 10 in Woche 11.
+
+Das Dropdown unterstützt höchstens 25 **spielbare** Runden insgesamt; Playoffs zählen dazu, die Redraft-Pause nicht. Ungültige Kombinationen werden vor dem Speichern abgewiesen. `/liga status` zeigt die aktuelle Runde beziehungsweise Redraft und die nächste Runde an. Vor Beginn ist die erste Runde vorausgewählt, nach dem Ende die letzte; der Status weist auf den noch ausstehenden Start beziehungsweise das Ende hin.
+
+Eine erneute Einrichtung ändert vorhandene Posts nicht. Neue Reports speichern ihre Rundenbezeichnung unabhängig vom aktiven Plan. Beim Seasonwechsel bleiben vorherige Einstellungen für historische Korrekturen erhalten. Ein während der Eingabe geänderter Rundenplan macht betroffene Formulare ungültig; sie müssen erneut geöffnet werden.
+
+Einrichtungsentwürfe sind an Server und Person gebunden und liegen bis zu 30 Minuten nur im Arbeitsspeicher. Ein neuer `/liga season`-Aufruf derselben Person auf demselben Server ersetzt ihren vorherigen Entwurf. Nach einem Bot-Neustart den Dialog erneut öffnen; gespeicherte Einstellungen bleiben erhalten. Vor dem Speichern wird die Verwaltungsberechtigung frisch geladen und die ursprüngliche Konfiguration auf zwischenzeitliche Änderungen geprüft. Eine ältere Vorschau überschreibt keine neueren Einstellungen anderer Verwalter. Bei Speicherfehlern bleiben die bisherigen Einstellungen erhalten; die Bestätigung kann nach Behebung erneut versucht werden.
+
+### Ergebnis melden
+
+`/report` öffnet das Modal mit weiterhin fünf Feldern. Das Dropdown **Runde** enthält reguläre Spieltage, gegebenenfalls mit Hin-/Rückrunde, sowie die konfigurierten Playoff-Runden. Die aktuelle Runde ist vorausgewählt; andere Runden bleiben für Nachholspiele auswählbar. Redraft ist keine meldbare Runde. In der Redraft-Woche ist keine Runde vorausgewählt; für Nachholspiele die zugehörige Runde ausdrücklich auswählen. Die beiden Spieler-Dropdowns enthalten 2–25 menschliche Mitglieder der Teilnehmerrolle, sortiert nach Server-Anzeigename. Namensgleichheiten bleiben durch Discord-IDs unterscheidbar.
+
+Beim Absenden werden Mitglieder, Rolle und Bot-Status erneut geprüft. Ein Formular einer inzwischen gewechselten Season wird abgewiesen. Scores müssen 1–100 Zeichen lang sein; Replay-Links müssen HTTP-/HTTPS-Adressen mit höchstens 1024 Zeichen sein. Das Replay wird nicht extern abgerufen oder inhaltlich geprüft.
+
+Der Post erscheint im Aufrufkanal, die Bestätigung ist privat. Die kleine Kopfzeile zeigt beispielsweise `Season 5 · Playoffs · Halbfinale` oder `Season 6 · Rückrunde · Spieltag 10`; darunter steht der Matchtitel mit beiden Namen. Erwähnungen sind deaktiviert und Namen bzw. Scores werden für die Spoilerdarstellung escaped. Der Duplikatschlüssel enthält Server, Kanal, Season, Runden-ID, beide Spieler-IDs und normalisierten Replay-Link. Ein anderer Score oder vertauschter Gewinner erzeugt keinen weiteren Post; veröffentlichte Duplikate verweisen auf die bestehende Nachricht.
+
+### Bearbeiten und löschen
+
+**Bearbeiten** unter dem Post öffnet direkt das vorausgefüllte Modal mit Runde, Gewinner, Verlierer, Score und Replay-Link. Die Season bleibt die des Reports und steht im Titel. Das Dropdown verwendet auch nach einem Seasonwechsel den ursprünglichen Seasonplan. Wechsel zwischen Ligaspieltag und Playoffs aktualisieren Post, Archiv und Log zusammen; bei Playoffs wird keine künstliche Spieltagsnummer gespeichert. Bereits gespeicherte Rundenmetadaten bleiben bei einer reinen Ergebniskorrektur erhalten, auch wenn die Seasonkonfiguration später geändert wurde. Bei alten Reports ohne historischen Plan stehen bis zu 25 reguläre Spieltage zur Verfügung; für eine noch bekannte Season gilt deren Grenze. Wurde ein bisheriger alter Spieltag durch eine Verkürzung ungültig, muss ein gültiger Wert ausdrücklich ausgewählt werden.
+
+Erst das Absenden ändert denselben Discord-Post und seinen Suchtreffer. Nachrichten-ID und Melder bleiben erhalten. Schließen bzw. Abbrechen verändert keine Daten. Historische Teilnehmer bleiben auswählbar, auch ohne aktuelle Rolle oder Servermitgliedschaft; neu hinzugefügte Teilnehmer benötigen die Teilnehmerrolle. Bei gleichen gespeicherten Namen wird der ursprüngliche Gewinner nicht geraten.
+
+**Löschen** zeigt eine private Bestätigung mit Season, Runde, Teilnehmern, Replay-Link und Kanal. Erst **Ja, Report löschen** entfernt Post und Suchtreffer. Der Logeintrag einschließlich ursprünglicher Runde bleibt erhalten.
+
+Die Buttons enthalten feste Report-IDs und benötigen keine kurzlebigen Collector; sie funktionieren nach Neustarts weiter. Vorhandene, im Archiv eindeutig verknüpfte Posts erhalten beim Start nach Möglichkeit ebenfalls Buttons. Fremde Nachrichten und Webhook-Posts werden nicht verändert. Bereits gelöschte Posts bleiben zur Archivbereinigung gespeichert.
+
+### Bereits gelöschten Post im Archiv bereinigen
+
+```text
+/report-entfernen season:4 name:Jan
+/report-entfernen season:4 name:Jan spieltag:3
+/report-entfernen season:5 name:Jan runde:semifinal
+```
+
+Ein Nachrichtenlink ist nicht nötig. Der optionale Filter `runde` bietet Vorschläge wie **Playoffs · Halbfinale** oder **Rückrunde · Spieltag 10**. `spieltag` bleibt als Alternative für reguläre Spieltage verfügbar; beide Filter gleichzeitig werden abgewiesen. Ein einzelner Treffer öffnet die private Bestätigung. Mehrere Treffer werden per Dropdown mit Runde, Teilnehmern und Replay-Link ausgewählt; ab 26 Treffern gibt es Seiten, die den Rundenfilter beibehalten. Immer nur ein Report wird nach Bestätigung entfernt. Fehlt die Discord-Nachricht bereits, bereinigt der Bot nur das Archiv und protokolliert die Löschung.
+
+### Replays suchen
 
 ```text
 /suchen season:4 name:Jan
 /suchen season:4 name:Jan spieltag:3
+/suchen season:5 name:Jan runde:semifinal
 ```
 
-| Option | Pflicht | Verhalten |
-| --- | --- | --- |
-| `season` | Ja | Season-Nummer von 1 bis 9999 |
-| `name` | Ja | Spieler aus den Autocomplete-Vorschlägen auswählen; ein eindeutig zuordenbarer gespeicherter Name funktioniert ebenfalls |
-| `spieltag` | Nein | Ganze Zahl von 1 bis 25; ohne Angabe werden alle passenden Spieltage berücksichtigt |
+Season und Name sind Pflichtfelder. `runde` filtert optional nach einer konkreten Liga- oder Playoff-Runde, `spieltag` alternativ nach einem regulären Spieltag. Ohne Rundenfilter erscheinen alle Replays einschließlich Playoffs. Vorschläge stammen aus dem Archiv, einschließlich früherer Namen und ehemaliger Teilnehmer. Bei identischen Namen einen eindeutigen Vorschlag auswählen. Die Ausgabe enthält ausschließlich Runde, Teilnehmer und Replay-Link.
 
-Zuerst die Season eintragen. Die Namensvorschläge stammen ausschließlich aus gespeicherten Matches dieser Season und benötigen keine aktuelle Teilnehmerrolle. Die Suche verwendet Discord-IDs und berücksichtigt Namens-Snapshots aus den gespeicherten Matches. Bei mehrdeutigen Namen muss ein Vorschlag ausgewählt werden.
+Treffer kommen als normale DMs. Gesperrte DMs oder teilweise fehlgeschlagener Versand werden privat erklärt. Ergebnisse und Vorschläge berücksichtigen lesbare Ergebniskanäle. Die Suche nutzt den SQLite-Index für Server und Season und benötigt keine aktive Season.
 
-Es werden nur Archiv-Einträge desselben Servers aus für die suchende Person lesbaren Kanälen berücksichtigt. Erforderlich sind `ViewChannel` und `ReadMessageHistory`. Bei privaten Threads berücksichtigt der Bot zusätzlich bekannte Thread-Mitgliedschaften oder `ManageThreads`; nicht im Cache verfügbare Kanäle werden ausgelassen.
-
-Die Treffer sind nach Spieltag aufsteigend sortiert und werden in diesem Layout per DM gesendet:
+### Änderungsprotokoll anfordern
 
 ```text
-Spieltag 3 · Jan vs. Max
-https://replay.pokemonshowdown.com/...
+/liga log season:4
 ```
 
-Spieltag und Paarung werden in Discord fett dargestellt. Gewinner und Score gehören nicht zur Suchausgabe. Nachrichten werden an Discords Grenze von 2000 Zeichen aufgeteilt; Linkvorschauen und Erwähnungen sind deaktiviert.
+**Die Season ist verpflichtend.** Es gibt keinen Standardabruf aller Seasons. Alle aktuellen Teilnehmer sowie die Ligaverwaltung dürfen das Protokoll dieser Season anfordern; ihre Rollen werden erneut geladen.
 
-Im Kanal erscheint ausschließlich eine ephemere Bestätigung oder Fehlermeldung. Für die Zustellung müssen DMs erlaubt sein; außerdem darf der Bot nicht blockiert sein. Bei teilweise fehlgeschlagenem Versand zeigt die Rückmeldung die Zahl bereits zugestellter Nachrichten an. Ohne Treffer wird keine DM verschickt.
+Die DM enthält eine `.txt`-Datei mit Erstellungen, Änderungen, Löschungen und gegebenenfalls der JSON-Übernahme. Einträge zeigen Person/Discord-ID, Datum/Uhrzeit in `Europe/Berlin`, Report-/Nachrichten-ID und Vorher-/Nachher-Werte. Größere Exporte werden in vollständige UTF-8-Dateien aufgeteilt. Eingaben mit Zeilenumbrüchen werden escaped, damit sie keine zusätzlichen Logzeilen vortäuschen.
 
-Versendete DMs bleiben ein Snapshot der jeweiligen Suche. Neue Reports aktualisieren alte DMs nicht automatisch.
+Teilnehmer erhalten nur Einträge aus lesbaren Kanälen; private Thread-Mitgliedschaften werden frisch geprüft. Die Verwaltung kann auch Historie bereits entfernter Kanäle einsehen. Fehlende Einträge oder gesperrte DMs werden privat gemeldet; Protokollinhalte erscheinen nicht als öffentliche Fehlermeldung.
 
-## Datenspeicherung und Betrieb
+Zugestellte Such-DMs und Logdateien sind Momentaufnahmen und werden nach einer Korrektur nicht rückwirkend verändert. Für den aktuellen Stand erneut abrufen. Das Protokoll hat im Bot keine Bearbeiten-/Löschen-Funktion. Wer direkten Dateizugriff auf den Server hat, besitzt weiterhin technische Kontrolle über die Datenbank.
 
-### Speicherort und Datenmodell
+## Speicherung und JSON-Übernahme
 
-Die Auswahl des Datenverzeichnisses erfolgt in dieser Reihenfolge:
+Die aktive Datei ist **`liga.sqlite`** im Datenverzeichnis:
 
-1. `DATA_DIR`, falls gesetzt.
-2. `RAILWAY_VOLUME_MOUNT_PATH`, falls gesetzt.
-3. `data/` im Projektverzeichnis.
+| Tabelle        | Inhalt                                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| `settings`     | Aktuelle Liga-Konfiguration pro Server und frühere Seasonpläne unter `history[season]`    |
+| `reports`      | Suchmetadaten, Melder, Ergebnis, Versandstatus, Nachrichten-ID und vorgemerkte Änderungen |
+| `audit_events` | Eigenständige Vorher-/Nachher-Protokolle, unabhängig vom Fortbestand des Reports          |
+| `metadata`     | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat  |
 
-| Datei | Inhalt |
-| --- | --- |
-| `league-settings.json` | Formatversion 1; Objekt `guilds`, das pro Server-ID `season`, `matchdays` und `startDate` enthält |
-| `matches.json` | Formatversion 1; Array `matches` mit den gespeicherten Replay-Metadaten |
+Das Protokoll enthält bewusst auch Gewinner und Score. Die beschriebene Rollenfreigabe gilt daher für den Abruf. Bot-Tokens werden nicht in SQLite gespeichert.
 
-Ein Match enthält `guildId`, `channelId`, `season`, `matchday`, zwei `players` mit jeweils `id` und `name` sowie `link`. Die Spieler werden in einer stabilen Reihenfolge nach ID gespeichert, ohne Gewinner und Verlierer zu kennzeichnen. Der Score wird nicht im Archiv gespeichert.
+Die Tabellenstruktur bleibt gleich. Neue Einstellungen ergänzen `format`, `redraft`, gegebenenfalls `playoffsFrom` und den geordneten Wochenplan `rounds`; frühere Pläne werden ohne verschachtelte Historien in derselben Settings-Zeile aufbewahrt. Reports speichern eine geprüfte `round`-Momentaufnahme mit fester ID. Nur Ligaspiele haben zusätzlich `matchday`; Playoffs tragen ihre eigene Runde, Pausen werden nie als Report gespeichert. Alte Datensätze mit ausschließlich `matchday` sowie bestehende Änderungsvormerkungen bleiben lesbar. Backups enthalten auch die historischen Pläne.
 
-Die Dateien werden beim Start eingelesen und im Arbeitsspeicher gehalten. Änderungen werden synchron in eine temporäre Datei geschrieben, die anschließend per Rename die bisherige JSON-Datei ersetzt. Beschädigte vorhandene Dateien führen zu einem Fehler statt zu einem stillen Zurücksetzen. Beim ersten Start wird ein leeres Replay-Archiv angelegt, wodurch auch die Schreibbarkeit des Verzeichnisses geprüft wird.
+Beim ersten Start ohne initialisierte Datenbank werden vorhandene `league-settings.json` und `matches.json` geprüft. Eine zusätzliche Kopie entsteht unter `migration-json-…/`. Einstellungen, IDs, Versandvormerkungen und unterbrochene Änderungen werden transaktional übernommen. Die Originaldateien bleiben unverändert und werden danach nicht mehr als aktiver Speicher eingelesen.
 
-### Verhalten beim Melden und bei Fehlern
+Die Übernahme erfindet keine früheren Melder, Scores oder Änderungen. Solche Angaben bleiben unbekannt. Im Log steht der Übernahmezeitpunkt, nicht ein behaupteter ursprünglicher Reportzeitpunkt. Reports ohne bekannten Melder können nur von der Verwaltung bearbeitet werden. Einträge ohne Nachrichten-ID bleiben suchbar, können aber nicht automatisch einem Post zugeordnet werden. Es gibt keinen Import der gesamten Discord-Nachrichtenhistorie.
 
-1. Eingaben, ausgewählte Mitglieder und Season-Zuordnung werden geprüft.
-2. Die Replay-Metadaten werden gespeichert.
-3. Der Ergebnispost wird an Discord gesendet.
-4. Die meldende Person bekommt eine private Rückmeldung.
+Beschädigte Dateien und unbekannte Datenbankversionen verhindern den Start; sie werden nicht durch leere Daten ersetzt. Eine initialisierte Datenbank wird nicht aus veralteten JSON-Dateien überschrieben. **`liga.sqlite` nicht zum Zurücksetzen löschen**, wenn daneben alte JSON-Dateien liegen; sonst könnte deren alter Stand erneut importiert werden.
 
-Schlägt das Speichern fehl, wird kein öffentlicher Ergebnispost gesendet. Schlägt erst das Posten bei Discord fehl, bleibt der Suchtreffer erhalten und der Bot meldet den Fehler.
+### Unterbrochene Vorgänge
 
-Ein identisches Replay mit derselben Server-ID, Kanal-ID, Season, Spieltag und denselben beiden Spieler-IDs erzeugt keinen zweiten Archiv-Eintrag. Diese Erkennung verhindert **keine zusätzlichen öffentlichen Posts**, wenn derselbe Report erneut abgesendet wird.
+Vor dem öffentlichen Versand wird der Zustand dauerhaft reserviert. Gleichzeitige Meldungen desselben Matches werden gesperrt. Ein Timeout oder unklarer Netzwerkausgang führt auch nach Neustarts nicht automatisch zu einem erneuten Post. Eine eindeutige Discord-Ablehnung lässt einen neuen Versuch zu.
 
-### Grenzen und Betriebshinweise
+Bearbeitungen und Löschungen werden vor dem Discord-Aufruf vorgemerkt. Nach erfolgreicher Discord-Antwort werden Report und endgültiger Logeintrag gemeinsam in einer SQLite-Transaktion aktualisiert. Schlägt das Logschreiben fehl, rollt diese Transaktion zurück; die Vormerkung bleibt erhalten. Discord selbst gehört nicht zur Datenbanktransaktion.
 
-- Das Archiv enthält nur Reports, die der Bot über `/report` gespeichert hat. Es gibt keinen Import alter Discord-Nachrichten.
-- Neue Seasons löschen keine früheren Matches. Auch die Suche nach abgeschlossenen Seasons bleibt verfügbar.
-- Das Ändern oder Löschen eines Discord-Ergebnisposts verändert den Archiv-Eintrag nicht. Ein Befehl zum Bearbeiten oder Löschen von Archiv-Einträgen ist derzeit nicht implementiert.
-- Für jede Installation sind höchstens 25 Teilnehmer und 25 Spieltage pro Season vorgesehen.
-- Eine Bot-Instanz muss dauerhaft laufen, damit die Befehle beantwortet werden. Der Code stellt keinen HTTP-Endpunkt für eine Webseite oder einen Healthcheck bereit.
-- **Nur eine laufende Instanz pro gemeinsamem Datenverzeichnis betreiben.** Es gibt keine Dateisperren oder Synchronisation zwischen mehreren Prozessen.
-- Für gleichzeitige Entwicklungs- und Produktivtests getrennte Discord-Anwendungen, Tokens und Datenverzeichnisse verwenden. Zwei Prozesse mit demselben Bot können dieselben Interaktionen verarbeiten und ihre globalen Befehlslisten gegenseitig überschreiben.
+Zum Fortsetzen einer vorgemerkten Korrektur erneut **Bearbeiten** drücken. Der Bot schließt zuerst den gespeicherten Versuch ab. Eine Löschung wird mit **Löschen** und erneuter Bestätigung oder `/report-entfernen` abgeschlossen. Bereits entfernte Nachrichten zählen dabei als Erfolg. Eine bestätigte Löschung kann eine ungeklärte Korrektur ersetzen. Die ursprünglich erfasste handelnde Person bleibt bei Wiederholungen im Log erhalten.
 
-### Backups und Wiederherstellung
+Bei unklarer Erstveröffentlichung den Kanal und die Datenbank nach Sicherung bei angehaltenem Bot prüfen. Eine manuelle Statuskorrektur erfordert eine eindeutige Zuordnung der Discord-Nachricht. Änderungen an alten JSON-Dateien beeinflussen SQLite nicht.
 
-Für eine konsistente manuelle Sicherung den Bot stoppen und beide JSON-Dateien zusammen kopieren. Zur Wiederherstellung den Bot stoppen, die Dateien im Datenverzeichnis ersetzen und anschließend neu starten. Ein persistentes Volume schützt vor dem Verlust bei Container-Neustarts; zusätzliche Backups schützen die Daten auch bei versehentlichem Löschen oder beschädigten Dateien.
+## Backups und Wiederherstellung
 
-## Deployment auf Railway
+Beim Start und anschließend stündlich prüft der Bot, ob für den aktuellen UTC-Kalendertag eine gültige Sicherung vorliegt. Unter `sqlite-backups/backup-…/liga.sqlite` bleiben die letzten **14 Kopien** erhalten. `VACUUM INTO` erstellt einen konsistenten Snapshot; erst nach Prüfung und Veröffentlichung der Kopie werden ältere, eindeutig erkannte Sicherungen entfernt. Ordner mit fremden Dateien werden beibehalten und gemeldet. [SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html)
 
-Der Bot läuft als dauerhafter Node.js-Service. Ein öffentliches Domain-Mapping ist für den Discord-Gateway-Betrieb nicht nötig.
+Gesichert werden Einstellungen, Reports, Vormerkungen und die komplette Historie. Alte JSON-Backups unter `backups/` sowie die Kopien vor der Migration bleiben als Rückfallebene erhalten und werden von der SQLite-Rotation nicht gelöscht. Auch eine noch nicht konfigurierte Datenbank lässt sich sichern.
 
-1. Dieses Repository forken oder eine eigene Kopie auf GitHub anlegen.
-2. In Railway einen Service aus diesem GitHub-Repository erstellen und den gewünschten Deployment-Branch auswählen.
-3. Die Node.js-Erkennung verwenden; für eine manuelle Installation `npm ci` und als Start Command **`npm start`** konfigurieren.
-4. Unter **Variables** die Werte für `DISCORD_TOKEN`, `CLIENT_ID` und `PARTICIPANT_ROLE_ID` der eigenen Discord-Anwendung hinterlegen.
-5. Im Projekt ein **Volume** hinzufügen, mit dem Bot-Service verbinden und den **Mount Path auf `/data`** setzen.
-6. Den Service deployen und in den Logs Discord-Verbindung und Befehlsregistrierung prüfen.
-7. Auf dem Discord-Server einmal `/liga season` ausführen und danach Report, Suche sowie einen Neustart testen.
-
-Railway setzt `RAILWAY_VOLUME_MOUNT_PATH` und `RAILWAY_ENVIRONMENT_ID` selbst. Diese Variablen nicht von Hand mit Platzhaltern befüllen. Ohne eigene `DATA_DIR`-Variable verwendet der Bot automatisch das Volume und speichert dort:
-
-```text
-/data/league-settings.json
-/data/matches.json
+```powershell
+npm run backup
 ```
 
-Falls `DATA_DIR` gesetzt wird, muss das auf Railway ein Pfad **innerhalb des zugeordneten Volumes** sein, z. B. `/data/bot`. Ein aus der lokalen `.env` übernommenes `DATA_DIR=./data` kann außerhalb des Volumes liegen und sollte dort entsprechend angepasst oder weggelassen werden.
+Die manuelle Sicherung verwendet denselben Datenpfad wie der Bot und benötigt kein Discord-Login. Ohne SQLite-Datei kann sie weiterhin alte JSON-Dateien sichern. Vor manueller Wartung den Bot anhalten; integrierte automatische SQLite-Backups sind im laufenden Betrieb konsistent.
 
-Wenn Railway erkannt wird, aber kein Volume konfiguriert ist oder `DATA_DIR` außerhalb liegt, beendet sich der Bot mit einer Fehlermeldung. Das Volume ist erst zur Laufzeit verfügbar: Der Bot wird über den Start Command gestartet, nicht als Build- oder Pre-Deploy-Schritt.
+Wiederherstellung:
 
-Den Service mit einer Instanz betreiben und für das Volume Backups einrichten. Lokaler Testbetrieb und Railway besitzen getrennte Dateien; eine lokal eingerichtete Season wird nicht automatisch nach Railway übertragen.
+1. Bot bzw. Railway-Deployment stoppen.
+2. Die aktuelle Datenbank separat sichern, auch wenn sie beschädigt erscheint.
+3. Eine geprüfte `liga.sqlite` aus dem gewünschten Sicherungsordner nach `DATA_DIR/liga.sqlite` zurückspielen.
+4. Bot starten und `/liga status`, Replay-Suche und Logabruf prüfen.
 
-Weitere Informationen: [Railway Volumes](https://docs.railway.com/volumes) und [Volume-Backups](https://docs.railway.com/volumes/backups).
+Immer die gesamte Datenbank zurückspielen; keine einzelnen Report- und Logtabellen mischen. Ein älterer Backup-Stand kann von neueren Discord-Nachrichten abweichen. Backups auf demselben Volume schützen nicht vor dessen Verlust; eine externe Kopie oder zusätzliche Railway-Volume-Backups bleiben sinnvoll.
 
-## Entwicklung und Tests
+## Railway
 
-```sh
+1. Gewünschten GitHub-Branch verbinden und **eine Instanz** betreiben.
+2. Volume mit Mount Path `/data` hinzufügen.
+3. Token, Application-ID, Teilnehmerrollen-ID und optional Verwaltungsrollen-ID als Variablen setzen.
+4. Node.js 24 verwenden; eine abweichende `RAILPACK_NODE_VERSION` entfernen oder auf `24` setzen.
+5. Installation mit `npm ci`, Start mit `npm start`.
+
+Der Volume-Mount wird automatisch verwendet. Ein expliziter `DATA_DIR` muss innerhalb des Volumes liegen. Ohne Volume oder bei einem Pfad außerhalb davon bricht der Start auf Railway ab. Migration und Backups erfolgen zur Laufzeit, nicht im Build oder Pre-Deploy.
+
+Lokale Einstellungen und Daten werden nicht automatisch zu Railway übertragen. Bei parallelem Test- und Produktivbetrieb eine separate Discord-Anwendung mit eigenem Token und Datenverzeichnis verwenden. Zwei Prozesse derselben Anwendung teilen sonst Interaktionen und Befehlsregistrierungen.
+
+[Railway Volumes](https://docs.railway.com/volumes), [Railway-Backups](https://docs.railway.com/volumes/backups), [Railpack Node.js](https://railpack.com/languages/node)
+
+## Entwicklung
+
+```powershell
 npm ci
-npm test
+npm run check
 ```
 
-Die Tests verwenden den integrierten Node.js-Test-Runner `node:test`, echte discord.js-Komponenten, simulierte Discord-Interaktionen und temporäre Dateien. Sie brauchen weder Bot-Token noch Discord-Verbindung und versenden keine Nachrichten.
+`npm run check` führt Lint-Prüfung, Formatprüfung und Tests nacheinander aus. Einzeln sind sie über `npm run lint`, `npm run format:check` und `npm test` verfügbar. `npm run format` formatiert die Projektdateien automatisch; es startet den Bot nicht.
 
-Abgedeckt werden unter anderem Teilnehmerauswahl und Rollenänderungen, Spoilerformatierung, Season-Wechsel, Kalender- und Sommerzeitgrenzen, persistente Speicherung, Fehler beim Schreiben, Zugriffsfilter der Suche und vollständiger bzw. fehlgeschlagener DM-Versand.
+Die [ESLint-Konfiguration](https://eslint.org/docs/latest/use/configure/configuration-files) verwendet empfohlene JavaScript-Regeln für Node.js/CommonJS sowie `no-var`, `prefer-const` und strikte Vergleiche (mit erlaubten Null-/Undefined-Prüfungen über `== null`). [Prettier](https://prettier.io/docs/install) sorgt für einheitliche Formatierung. Beide Werkzeuge sind als fest versionierte Entwicklungsabhängigkeiten installiert; für den laufenden Bot werden sie nicht benötigt. `.editorconfig` und `.gitattributes` legen UTF-8, zwei Leerzeichen und LF-Zeilenenden fest. Lokale Daten, Zugangsdaten und generierte Dateien werden von den Werkzeugen ausgeschlossen.
 
-| Datei | Aufgabe |
-| --- | --- |
-| [`index.js`](index.js) | Umgebungsvariablen laden, Client starten, Befehle registrieren und Interaktionen verteilen |
-| [`reports.js`](reports.js) | Teilnehmerauswahl, Modal, Validierung und Ergebnis-Embed |
-| [`league-commands.js`](league-commands.js) | `/liga`-Definition und Verarbeitung |
-| [`league-settings.js`](league-settings.js) | Season-Konfiguration, Kalenderberechnung und Datenpfad |
-| [`match-store.js`](match-store.js) | Replay-Archiv, URL-Validierung und Duplikaterkennung |
-| [`search-commands.js`](search-commands.js) | `/suchen`, Autocomplete, Zugriffsprüfung und DM-Versand |
-| `*.test.js` | Modul- und Integrationstests |
+Tests verwenden temporäre Verzeichnisse, echte SQLite-Transaktionen und simulierte Discord-Interaktionen. Sie lesen keine produktiven Tokens und senden keine echten Nachrichten. Abgedeckt sind Übernahme/Wiederanlauf, atomare Report-/Log-Speicherung, Backups/Wiederherstellung, Button-Zuordnung, Melder- und Rollenrechte, Rechteentzug, Pflicht-Season, DMs, UTF-8-Export, Spoiler, Duplikate, Kalender-/Sommerzeitgrenzen sowie Fehlerdiagnosen ohne Zugangsdaten.
+
+Beim Erstellen und Korrigieren gilt dieselbe Score-Prüfung: 1 bis 100 Zeichen und mindestens ein Zeichen, das kein Leerraum ist. Ungültige Eingaben führen zu einer privaten Rückmeldung, bevor ein Post oder Archiv-/Logeintrag verändert wird.
+
+### Projektstruktur
+
+```text
+index.js                   Bot starten
+backup.js                  Manuelle Datensicherung
+src/
+  app/                     Bot-Start und Verarbeitung der Interaktionen
+  league/                  Season-Einrichtung, Rundenplan, Status und Logabruf
+  reports/                 Report-Formulare, Ergebnisposts, Bearbeiten, Löschen und Suche
+  storage/                 SQLite, Validierung, JSON-Übernahme und Backups
+  shared/                  Berechtigungen, Fehlerdiagnosen und gemeinsame Datentypen
+tests/
+  *.test.js                Modul- und Integrationstests
+  helpers/                 Gemeinsame Testhelfer
+```
+
+| Bereich                    | Zuständigkeit                                                                                                                                                                                                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/`                 | `bot.js` erzeugt den Discord-Client und startet Hintergrundaufgaben. `startup.js` prüft Konfiguration und Speicher, registriert Befehle und meldet den Bot an. `interactions.js` verteilt Interaktionen an die Funktionen.                                                                                  |
+| `src/league/`              | `league-commands.js` und `audit-commands.js` verarbeiten Liga-Befehle und Logexporte. `season-setup.js` enthält den privaten Einrichtungsdialog, `season-rounds.js` den Wochenplan, Bezeichnungen und Rundenfilter.                                                                                         |
+| `src/reports/`             | `report-handler.js` verarbeitet neue Meldungen, `report-publisher.js` sichert den Versandstatus. `report-management.js` prüft und verarbeitet Korrekturen und Löschungen, `report-manager.js` führt sie mit Wiederanlauf aus. `search-commands.js` enthält die Replay-Suche.                                |
+| `src/reports/report-ui.js` | Gemeinsame Formulare, Eingabeprüfung, Spoiler-Embeds und Report-Buttons einschließlich ihrer Ergänzung an älteren Posts. Die bisher getrennten Darstellungs- und Button-Module sind hier zusammengeführt.                                                                                                   |
+| `src/storage/`             | `database.js` verwaltet SQLite, Migrationen und Transaktionen. `match-store.js` und `league-settings.js` validieren und speichern Reports und Seasons. `json-storage.js` schreibt ältere JSON-Dokumente atomar. `database-backups.js` und `data-backups.js` erstellen SQLite- bzw. ältere JSON-Sicherungen. |
+| `src/shared/`              | `permissions.js` prüft Rollen, Kanalzugriff und Thread-Mitgliedschaften. `diagnostics.js` erstellt sichere technische Fehlerprotokolle. `data-types.js` beschreibt gemeinsame Datenstrukturen mit JSDoc.                                                                                                    |
+| `tests/`                   | Die Tests liegen getrennt vom Laufzeitcode. `integration.test.js` und `season-flow.test.js` prüfen zusammenhängende Abläufe; `helpers/` enthält wiederverwendbare Testhelfer.                                                                                                                               |
+
+Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Aufruf von `index.js` lädt `.env` und ruft `startBot()` aus `src/app/bot.js` auf. `startBot()` kann für Tests eine eigene Umgebung, einen Logger und Erzeuger für Discord-Clients erhalten; die Tests verwenden dabei die tatsächliche Verarbeitung mit simuliertem Discord und temporärer SQLite-Datenbank. Der Quelltext des Einstiegspunkts muss dafür nicht in einer separaten JavaScript-Umgebung nachgebildet werden.
+
+Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
+
+Der Standard-Datenordner bleibt `data/` im Projektverzeichnis. `DATA_DIR`, Railway-Volumes und die bestehenden SQLite-/JSON-Dateien werden durch die Quelltextstruktur nicht verschoben; für dieses Aufräumen ist keine Datenmigration nötig.
+
+Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `src/shared/data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Runde, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der regulären Spieltage, Startdatum und gegebenenfalls den Wochenplan; die aktuelle Runde wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit ausschließlich einem numerischen Spieltag bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
+
+Beide Speicher aktualisieren ihren Zustand erst nach erfolgreichem Schreiben. SQLite speichert Report und zugehörigen Logeintrag weiterhin in derselben Transaktion. Die JSON-Kompatibilität verwendet eine gemeinsame Hilfsfunktion: Sie schreibt in eine exklusiv angelegte temporäre Datei im Zielordner und ersetzt danach die Zieldatei per Umbenennung. Bei Fehlern bleibt der vorherige Stand erhalten; die Bereinigung entfernt nur die selbst angelegte temporäre Datei. Schlägt auch die Bereinigung fehl, bleiben beide Fehlerursachen für die Diagnose verfügbar. Datenformat und Konfiguration ändern sich dadurch nicht.
+
+## Technische Fehlerprotokolle
+
+Technische Fehler erscheinen im Terminal beziehungsweise in den Laufzeit-Logs des Railway-Services. Jede Meldung besteht aus einer festen Beschreibung und einem JSON-Objekt mit UTC-Zeitstempel, Vorgang (`operation`) und Fehlerursachen (`causes`). Soweit verfügbar kommen Server-, Kanal-, Nutzer-, Nachrichten- und Report-ID sowie Season und Spieltag hinzu. Dafür sind keine zusätzlichen Umgebungsvariablen oder Logdateien erforderlich.
+
+Speicher- und Discord-Fehler behalten ihre ursprüngliche Ursache über `Error.cause`. Dadurch ist beispielsweise bei einer fehlgeschlagenen Reportänderung erkennbar, ob Discord die Änderung abgelehnt hat oder danach die Speicherung gescheitert ist. Scheitert zusätzlich ein Datenbank-Rollback, werden beide Ursachen ausgewertet. Eine technische Ursache wird auch dann protokolliert, wenn der Nutzer eine verständliche Fehlermeldung erhält. Normale Eingabefehler und fehlende Rollen erzeugen keine technischen Fehlereinträge.
+
+| Diagnose                          | Bedeutung                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| `EACCES`, `EPERM`                 | Dateirechte oder Dateisperren prüfen                                          |
+| `ENOSPC`, `EDQUOT`                | Datenträger voll oder Speicherquote ausgeschöpft                              |
+| `SQLITE_READONLY`                 | Schreibzugriff auf die Datenbank fehlt                                        |
+| `SQLITE_FULL`                     | SQLite kann wegen eines Speicher- oder Datenbanklimits nicht weiter schreiben |
+| `SQLITE_BUSY`, `SQLITE_LOCKED`    | Ein anderer Zugriff blockiert die Datenbank                                   |
+| `SQLITE_CORRUPT`, `SQLITE_NOTADB` | Datenbankdatei beschädigt oder kein lesbares SQLite-Format                    |
+| Discord-Code `50013` / HTTP `403` | Discord-Berechtigungen fehlen                                                 |
+
+SQLite-Diagnosen enthalten neben `ERR_SQLITE_ERROR` den numerischen SQLite-Code und, soweit zugeordnet, dessen Namen. Auch erweiterte Codes werden ihrer Hauptkategorie zugeordnet. [SQLite-Fehlercodes](https://www.sqlite.org/rescode.html)
+
+Es werden ausschließlich ausgewählte Fehlercodes, Typen und geprüfte Kontextfelder ausgegeben. Rohe Fehlertexte und Stacks, Request-Bodys, Header, Dateiinhalte, Replay-URLs und Ergebnisse werden nicht in die technischen Fehlermeldungen übernommen. Unbekannte Fehler bleiben als Fehlertyp sichtbar, ohne möglicherweise vertrauliche Freitexte auszugeben. Die Anzahl verketteter Ursachen ist begrenzt.
+
+Das ist unabhängig vom fachlichen Änderungsprotokoll in SQLite: `/liga log season:…` liefert weiterhin die Report-Historie per DM, nicht diese technischen Fehlerdiagnosen.
 
 ## Fehlerbehebung
 
-| Problem | Prüfen / Lösung |
-| --- | --- |
-| Ein Slash-Befehl fehlt | Registrierungsmeldung im Terminal prüfen; Discord mit Strg+R bzw. im Browser mit F5 neu laden; richtigen Server und richtige Bot-Anwendung prüfen |
-| Registrierung schlägt fehl | `CLIENT_ID` muss zum `DISCORD_TOKEN` gehören; Token, Netzwerkzugriff und Fehlermeldung im Terminal prüfen |
-| Nur `/liga` fehlt | Account benötigt Server verwalten; zusätzlich Discord-Integrationsrechte prüfen |
-| Normale Mitglieder können keine Befehle verwenden | Anwendungsbefehle im jeweiligen Kanal und die Freigaben unter Servereinstellungen → Integrationen prüfen |
-| Bot startet mit einem Intent-Fehler | Server Members Intent im Developer Portal aktivieren |
-| Teilnehmerliste wird noch geladen | Initialen Mitgliederabruf abwarten und `/report` erneut ausführen |
-| Teilnehmerrolle wird nicht gefunden | Rollen-ID statt Rollenname verwenden; Rolle muss auf diesem Server existieren und darf nicht `@everyone` sein |
-| Ein Spieler fehlt im Formular | Teilnehmerrolle, Anzahl von 2 bis 25 menschlichen Teilnehmern und Serverzugehörigkeit prüfen |
-| Season ist nicht eingerichtet | `/liga season` auf demselben Server und in derselben Bot-Umgebung ausführen |
-| Keine Suchvorschläge oder Treffer | Erst Season eingeben; es müssen archivierte Reports dieser Season existieren; Zugriff auf Ergebniskanal und Nachrichtenverlauf prüfen |
-| Suchergebnisse können nicht als DM zugestellt werden | DMs von Servermitgliedern erlauben, Blockierung des Bots prüfen und Suche erneut ausführen |
-| Ergebnispost scheitert | Kanalrechte des Bots prüfen, insbesondere Kanal anzeigen, Nachrichten senden und Links einbetten; gespeichertes Replay bleibt im Archiv |
-| Railway meldet einen fehlenden oder ungültigen Datenpfad | Volume mit dem richtigen Service verbinden; `DATA_DIR` weglassen oder auf einen Unterordner des Mount-Pfads setzen |
-| Vorhandene JSON-Datei kann nicht gelesen werden | Bot stoppen, Fehlermeldung und Datei prüfen bzw. Backup wiederherstellen; die Datei wird absichtlich nicht automatisch überschrieben |
-| Doppelte Ergebnisposts | Prüfen, ob lokaler Bot und Hosting oder mehrere Prozesse mit demselben Token gleichzeitig laufen |
+| Problem                                            | Prüfen                                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `EBADENGINE` oder fehlendes `node:sqlite`          | Node.js 24 aktivieren und `npm ci` ausführen                                             |
+| Datenbank-/Übernahmefehler beim Start              | Datenbank, JSON-Dateien, Schreibrechte und Speicher prüfen; keinen leeren Ersatz anlegen |
+| Fehlender Intent                                   | Server Members Intent im Developer Portal aktivieren                                     |
+| Veraltete Rechtsklick-Aktionen oder Slash-Optionen | Bot neu starten, Discord mit Strg+R/F5 neu laden, richtige Anwendung prüfen              |
+| Ligaverwaltung erhält keine Freigabe               | Rollen-ID, Zuweisung und Kanal-/Integrationsrechte prüfen                                |
+| Teilnehmer sieht `/liga log` nicht                 | Nicht die ganze `/liga`-Gruppe auf Admins beschränken; Anwendungsbefehle freigeben       |
+| Bearbeiten wird abgelehnt                          | Es zählt der gespeicherte Melder; alte Melder können unbekannt sein                      |
+| Älterer Post hat keine Buttons                     | Bestätigte Nachrichten-ID im Archiv und Zugriff auf den Post erforderlich                |
+| Post manuell gelöscht                              | Verwaltung nutzt `/report-entfernen` mit Season und Spieler                              |
+| DM bleibt aus                                      | DMs von Servermitgliedern erlauben und Bot-Blockierung prüfen                            |
+| Unterbrochene Änderung                             | Speicher/Kanalrechte prüfen und denselben Vorgang erneut bestätigen                      |
+| Ältere DM zeigt alte Werte                         | Neue Suche bzw. neues Protokoll anfordern                                                |
