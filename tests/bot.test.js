@@ -107,7 +107,7 @@ function fixture(t, { failAt, cleanupFails = false } = {}) {
           calls.push("register");
           assert.deepEqual(
             body.map((command) => command.name),
-            ["report", "liga", "suchen", "report-entfernen"],
+            ["report", "liga", "suchen", "winrate", "report-entfernen"],
           );
           assert.equal(client.listenerCount(Events.InteractionCreate), 1);
           if (failAt === "register") throw failure;

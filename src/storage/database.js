@@ -465,6 +465,38 @@ class LigaDatabase {
       }));
   }
 
+  publishedReportChannels(guildId, season) {
+    const scope = season === undefined ? "" : " AND season=?";
+    return this.db
+      .prepare(
+        `SELECT DISTINCT channel_id FROM reports
+      WHERE guild_id=? AND publication_status='published'${scope}`,
+      )
+      .all(guildId, ...(season === undefined ? [] : [season]))
+      .map((row) => row.channel_id);
+  }
+
+  publishedPlayerNames(guildId, channelIds) {
+    if (!channelIds.length) return [];
+    // Keep each historical spelling once. The most recently reported name of each player comes last.
+    return this.db
+      .prepare(
+        `
+      WITH visible AS (
+        SELECT rowid AS seq, player1_id, player1_name, player2_id, player2_name FROM reports
+        WHERE guild_id=? AND publication_status='published'
+          AND channel_id IN (SELECT value FROM json_each(?))
+      ), appearances AS (
+        SELECT seq, player1_id AS id, player1_name AS name FROM visible
+        UNION ALL
+        SELECT seq, player2_id AS id, player2_name AS name FROM visible
+      )
+      SELECT id, name FROM appearances GROUP BY id, name ORDER BY MAX(seq), id
+    `,
+      )
+      .all(guildId, JSON.stringify(channelIds));
+  }
+
   /** Only count published results in channels the caller has checked for this guild. */
   countResults(guildId, playerId, channelIds, { opponentId, season } = {}) {
     if (!Array.isArray(channelIds))

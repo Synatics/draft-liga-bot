@@ -11,6 +11,7 @@ Für die Veröffentlichung auf Discord: [Patch Notes und Kurzanleitung für Vers
 - Ergebnisposts mit Season und Runde, Spoilern für Gewinner/Verlierer/Score und zufälliger Reihenfolge der Namen im Titel.
 - **Bearbeiten** und **Löschen** als Buttons direkt unter dem Ergebnispost. Keine zusätzlichen Rechtsklick-/Apps-Aktionen.
 - `/suchen`: Replay-Links mit Runde und Teilnehmern als normale, dauerhaft sichtbare DMs.
+- `/winrate` schickt die Gesamtbilanz eines Spielers oder die Bilanz gegen einen bestimmten Gegner per DM.
 - `/liga log season:…`: Lesbares Änderungsprotokoll genau einer Season als `.txt`-Datei per DM. Die Season ist verpflichtend.
 - `/report-entfernen`: Archivbereinigung auch bei bereits gelöschtem Discord-Post, ohne Nachrichtenlink.
 - SQLite für Einstellungen, Reports, Melder, Ergebnisse, Versandvormerkungen und Änderungshistorie. Bestehende JSON-Daten werden einmalig übernommen.
@@ -81,7 +82,7 @@ Discord-IDs müssen 17–20 Ziffern haben. Ein gesetzter, ungültiger Rollenwert
 npm start
 ```
 
-Beim Start werden Konfiguration, Schreibzugriff, SQLite und gegebenenfalls die JSON-Übernahme geprüft. Danach registriert der Bot `/report`, `/liga`, `/suchen` und `/report-entfernen` **global für diese Anwendung**. Dabei werden die früheren Rechtsklick-Aktionen entfernt. Registrierung und Anmeldung haben zusammen ein Zeitlimit von 60 Sekunden. Startfehler führen zu Exit-Code 1; Token und rohe Discord-Request-Daten werden nicht als Startfehlermeldung ausgegeben.
+Beim Start werden Konfiguration, Schreibzugriff, SQLite und gegebenenfalls die JSON-Übernahme geprüft. Danach registriert der Bot `/report`, `/liga`, `/suchen`, `/winrate` und `/report-entfernen` **global für diese Anwendung**. Dabei werden die früheren Rechtsklick-Aktionen entfernt. Registrierung und Anmeldung haben zusammen ein Zeitlimit von 60 Sekunden. Startfehler führen zu Exit-Code 1; Token und rohe Discord-Request-Daten werden nicht als Startfehlermeldung ausgegeben.
 
 Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine eigene Discord-Anwendung verwenden. Ein separates Deploy-Commands-Skript ist nicht nötig. Bei veralteten Optionen Discord mit Strg+R bzw. im Browser mit F5 neu laden.
 
@@ -91,6 +92,7 @@ Die Registrierung ersetzt die globale Befehlsliste dieser Anwendung; dafür eine
 | -------------------- | ------------------------------------------------------------------------------------ |
 | `/report`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
 | `/suchen`            | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
+| `/winrate`           | Aktuelle Teilnehmerrolle oder Ligaverwaltungsrolle                                   |
 | Report bearbeiten    | Gespeicherte meldende Person mit aktueller Teilnehmerrolle oder Ligaverwaltungsrolle |
 | Report löschen       | Nur Ligaverwaltungsrolle                                                             |
 | `/report-entfernen`  | Nur Ligaverwaltungsrolle                                                             |
@@ -178,6 +180,19 @@ Ein Nachrichtenlink ist nicht nötig. Der optionale Filter `runde` bietet Vorsch
 Season und Name sind Pflichtfelder. `runde` filtert optional nach einer konkreten Liga- oder Playoff-Runde, `spieltag` alternativ nach einem regulären Spieltag. Ohne Rundenfilter erscheinen alle Replays einschließlich Playoffs. Vorschläge stammen aus dem Archiv, einschließlich früherer Namen und ehemaliger Teilnehmer. Bei identischen Namen einen eindeutigen Vorschlag auswählen. Die Ausgabe enthält ausschließlich Runde, Teilnehmer und Replay-Link.
 
 Treffer kommen als normale DMs. Gesperrte DMs oder teilweise fehlgeschlagener Versand werden privat erklärt. Ergebnisse und Vorschläge berücksichtigen lesbare Ergebniskanäle. Die Suche nutzt den SQLite-Index für Server und Season und benötigt keine aktive Season.
+
+### Winrate per DM abrufen
+
+```text
+/winrate spieler:Jan
+/winrate spieler:Jan gegner:Lennart
+/winrate spieler:Jan season:4
+/winrate spieler:Jan gegner:Lennart season:4
+```
+
+Nur `spieler` ist Pflicht. Ohne `gegner` erhältst du die Bilanz gegen alle Gegner, ohne `season` über alle gespeicherten Seasons. Die Namen kommen aus der aktuellen Teilnehmerrolle und aus veröffentlichten Reports in für dich lesbaren Kanälen. Frühere Namen funktionieren ebenfalls. Bei Namensgleichheit den passenden Vorschlag anhand der Discord-ID auswählen.
+
+Die DM nennt Anzahl der Matches, Siege, Niederlagen und die Winrate aus Sicht des zuerst gewählten Spielers. Vier Siege und eine Niederlage ergeben 80 %. Es zählen nur veröffentlichte Matches mit bekanntem Gewinner, einschließlich Playoffs. Bei null Matches steht das in der DM. Nach einer Korrektur oder Löschung liefert ein neuer Aufruf die aktuelle Bilanz. Im Server siehst nur du die Zustellbestätigung oder den Hinweis auf gesperrte DMs.
 
 ### Änderungsprotokoll anfordern
 

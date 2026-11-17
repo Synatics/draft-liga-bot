@@ -99,11 +99,12 @@ const operations = new Set([
   "report.edit",
   "report.delete",
   "search.dm",
+  "winrate.dm",
   "audit.dm",
   "backup.create",
   "backup.cleanup",
 ]);
-const commands = new Set(["report", "liga", "suchen", "report-entfernen"]);
+const commands = new Set(["report", "liga", "suchen", "winrate", "report-entfernen"]);
 const files = new Set(["liga.sqlite", "league-settings.json", "matches.json"]);
 
 function safeContext(context = {}) {

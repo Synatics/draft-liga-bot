@@ -16,11 +16,22 @@ const {
   handleSearchCommand,
   handleSearchAutocomplete,
 } = require("../reports/search-commands");
+const {
+  winrateCommand,
+  handleWinrateCommand,
+  handleWinrateAutocomplete,
+} = require("../reports/winrate-command");
 const { reportCommand, createReportHandler } = require("../reports/report-handler");
 const { logError, interactionContext } = require("../shared/diagnostics");
 const { createSeasonSetup } = require("../league/season-setup");
 
-const commands = [reportCommand, leagueCommand, searchCommand, ...managementCommands];
+const commands = [
+  reportCommand,
+  leagueCommand,
+  searchCommand,
+  winrateCommand,
+  ...managementCommands,
+];
 
 function createInteractionHandler({
   config,
@@ -52,6 +63,9 @@ function createInteractionHandler({
       interaction.isChatInputCommand() && interaction.commandName === "suchen";
     const isSearchAutocomplete =
       interaction.isAutocomplete() && interaction.commandName === "suchen";
+    const isWinrate =
+      interaction.commandName === "winrate" &&
+      (interaction.isChatInputCommand() || interaction.isAutocomplete());
     const isRemovalAutocomplete =
       interaction.isAutocomplete() && interaction.commandName === "report-entfernen";
     const isManagementCommand =
@@ -72,6 +86,7 @@ function createInteractionHandler({
       !isSeasonSetup &&
       !isSearchCommand &&
       !isSearchAutocomplete &&
+      !isWinrate &&
       !isRemovalAutocomplete &&
       !isManagementCommand &&
       !isManagementComponent
@@ -80,6 +95,12 @@ function createInteractionHandler({
     const logContext = interactionContext(interaction);
 
     try {
+      if (isWinrate) {
+        if (interaction.isAutocomplete())
+          await handleWinrateAutocomplete(interaction, database, config);
+        else await handleWinrateCommand(interaction, database, config, logger);
+        return;
+      }
       if (isSeasonSetup) {
         await seasonSetup.handle(interaction);
         return;
@@ -124,7 +145,7 @@ function createInteractionHandler({
       }
       await handleReport(interaction);
     } catch (error) {
-      if (isSearchAutocomplete || isRemovalAutocomplete) {
+      if (interaction.isAutocomplete()) {
         logError(
           "Fehler bei den Suchvorschlägen:",
           error,

@@ -12,6 +12,7 @@ const {
 } = require("discord.js");
 const { validateSettings } = require("../storage/league-settings");
 const { logError } = require("../shared/diagnostics");
+const { participantMembers } = require("../shared/permissions");
 const {
   playableRounds,
   roundLabel,
@@ -57,9 +58,9 @@ function checkParticipantRole(guild, roleId) {
 
 function getParticipantOptions(guild, roleId) {
   checkParticipantRole(guild, roleId);
-  const participants = [...guild.members.cache.values()]
-    .filter((member) => !member.user.bot && member.roles.cache.has(roleId))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "de") || a.id.localeCompare(b.id));
+  const participants = participantMembers(guild, roleId).sort(
+    (a, b) => a.displayName.localeCompare(b.displayName, "de") || a.id.localeCompare(b.id),
+  );
 
   if (participants.length < 2) {
     throw new ReportError("Für ein Match brauchen mindestens zwei Personen die Teilnehmerrolle.");

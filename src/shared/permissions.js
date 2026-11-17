@@ -49,6 +49,21 @@ async function currentMember(interaction) {
   return interaction.guild.members.fetch({ user: interaction.user.id, force: true });
 }
 
+async function currentLeagueMember(interaction, config) {
+  if (!interaction.guild) return null;
+  const member = await currentMember(interaction);
+  return isLeagueMember(interaction, config.participantRoleId, config.managerRoleId, member)
+    ? member
+    : null;
+}
+
+function participantMembers(guild, roleId) {
+  if (!roleId || roleId === guild.id) return [];
+  return [...guild.members.cache.values()].filter(
+    (member) => !member.user.bot && hasRole(member, roleId),
+  );
+}
+
 async function fetchCurrentChannel(interaction, channelId) {
   const channel = await interaction.guild.channels.fetch(channelId, { force: true });
   if (!channel) return null;
@@ -75,6 +90,20 @@ async function fetchReadableChannel(interaction, channelId, member) {
   return channel;
 }
 
+async function readableChannelIds(interaction, channelIds, member) {
+  const ids = await Promise.all(
+    [...new Set(channelIds)].map(async (id) => {
+      try {
+        return (await fetchReadableChannel(interaction, id, member)) ? id : null;
+      } catch {
+        // Deleted channels and failed permission or thread lookups never expose archived data.
+        return null;
+      }
+    }),
+  );
+  return ids.filter((id) => id !== null);
+}
+
 function actorOf(interaction, member = interaction.member) {
   return {
     id: interaction.user.id,
@@ -89,7 +118,10 @@ module.exports = {
   isLeagueMember,
   canReport,
   currentMember,
+  currentLeagueMember,
+  participantMembers,
   fetchCurrentChannel,
   fetchReadableChannel,
+  readableChannelIds,
   actorOf,
 };

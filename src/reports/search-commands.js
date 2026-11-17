@@ -5,15 +5,14 @@ const {
   escapeMarkdown,
 } = require("discord.js");
 const { logError, interactionContext } = require("../shared/diagnostics");
-const { isLeagueMember, currentMember, fetchReadableChannel } = require("../shared/permissions");
+const { currentLeagueMember, readableChannelIds } = require("../shared/permissions");
+const { PlayerNames, SearchError } = require("./player-names");
 const {
   matchRoundLabel,
   roundOrder,
   roundChoices,
   resolveRoundFilter,
 } = require("../league/season-rounds");
-
-class SearchError extends Error {}
 
 const searchCommand = {
   name: "suchen",
@@ -55,76 +54,30 @@ const searchCommand = {
   ],
 };
 
-async function searchMember(interaction, config) {
-  if (!interaction.guild) return null;
-  const member = await currentMember(interaction);
-  return isLeagueMember(interaction, config.participantRoleId, config.managerRoleId, member)
-    ? member
-    : null;
-}
-
 async function visibleMatches(interaction, store, season, member) {
   const matches = store.list(interaction.guild.id, season, { candidatesOnly: true });
-  const access = new Map(
-    await Promise.all(
-      [...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
-        try {
-          return [channelId, Boolean(await fetchReadableChannel(interaction, channelId, member))];
-        } catch {
-          // Missing channels and failed access checks never expose archived data.
-          return [channelId, false];
-        }
-      }),
+  const readable = new Set(
+    await readableChannelIds(
+      interaction,
+      matches.map((match) => match.channelId),
+      member,
     ),
   );
-  return matches.filter((match) => access.get(match.channelId));
+  return matches.filter((match) => readable.has(match.channelId));
 }
 
 function seasonPlayers(matches, season) {
-  const players = new Map();
-  for (const match of matches.filter((entry) => entry.season === season)) {
-    for (const player of match.players) {
-      const previous = players.get(player.id);
-      players.set(player.id, {
-        ...player,
-        aliases: new Set([...(previous?.aliases || []), player.name]),
-      });
-    }
-  }
-  return [...players.values()].sort(
-    (a, b) => a.name.localeCompare(b.name, "de") || a.id.localeCompare(b.id),
+  return new PlayerNames(
+    matches.filter((match) => match.season === season).flatMap((match) => match.players),
   );
 }
 
 function playerChoices(matches, season, input) {
-  const players = seasonPlayers(matches, season);
-  const query = input.trim().toLocaleLowerCase("de");
-  return players
-    .filter((player) =>
-      [...player.aliases].some((name) => name.toLocaleLowerCase("de").includes(query)),
-    )
-    .slice(0, 25)
-    .map((player) => ({
-      name: players.some((other) => other.id !== player.id && other.name === player.name)
-        ? `${player.name.slice(0, 76)} · ${player.id}`
-        : player.name,
-      value: player.id,
-    }));
+  return seasonPlayers(matches, season).choices(input);
 }
 
 function resolvePlayer(matches, season, input) {
-  const players = seasonPlayers(matches, season);
-  const selected = players.find((player) => player.id === input);
-  if (selected) return selected;
-  const query = input.trim().toLocaleLowerCase("de");
-  const found = players.filter((player) =>
-    [...player.aliases].some((name) => name.toLocaleLowerCase("de") === query),
-  );
-  if (found.length > 1)
-    throw new SearchError(
-      "Mehrere Teilnehmer haben diesen Namen. Bitte wähle einen Vorschlag im Feld „name“ aus.",
-    );
-  return found[0];
+  return seasonPlayers(matches, season).resolve(input);
 }
 
 function resultMessages(matches) {
@@ -146,7 +99,7 @@ function resultMessages(matches) {
 }
 
 async function handleSearchAutocomplete(interaction, store, config = {}) {
-  const member = await searchMember(interaction, config);
+  const member = await currentLeagueMember(interaction, config);
   if (!member) {
     await interaction.respond([]);
     return;
@@ -180,7 +133,7 @@ async function handleSearchAutocomplete(interaction, store, config = {}) {
 async function handleSearchCommand(interaction, store, config = {}) {
   await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
   if (!interaction.guild) throw new SearchError("Bitte verwende /suchen auf dem Liga-Server.");
-  const member = await searchMember(interaction, config);
+  const member = await currentLeagueMember(interaction, config);
   if (!member)
     throw new SearchError("Nur Teilnehmer und die Ligaverwaltung dürfen Replays suchen.");
   const season = interaction.options.getInteger("season", true);
