@@ -109,10 +109,25 @@ function setup({
   };
   let queries = 0;
   const database = {
-    auditEvents(guildId, selected) {
+    auditChannels(guildId, selected) {
+      queries++;
+      return [
+        ...new Set(
+          events
+            .filter((entry) => entry.guildId === guildId && entry.season === selected)
+            .map((entry) => entry.channelId),
+        ),
+      ];
+    },
+    auditEvents(guildId, selected, channels) {
       queries++;
       assert.equal(guildId, GUILD);
-      return events.filter((entry) => entry.guildId === guildId && entry.season === selected);
+      return events.filter(
+        (entry) =>
+          entry.guildId === guildId &&
+          entry.season === selected &&
+          channels.includes(entry.channelId),
+      );
     },
   };
   return { member, channel, interaction, dms, database, queries: () => queries };

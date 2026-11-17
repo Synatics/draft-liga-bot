@@ -298,17 +298,11 @@ function deletionPrompt(interaction, record) {
   };
 }
 
-async function removableMatches(interaction, store, managerRoleId) {
+async function removableMatches(interaction, store, managerRoleId, season, candidatesOnly = false) {
   if (!interaction.guild) return [];
   const member = await currentMember(interaction);
   if (!isLeagueManager(interaction, managerRoleId, member)) return [];
-  const matches = store
-    .list(interaction.guild.id)
-    .filter(
-      (match) =>
-        match.publication?.status === "published" &&
-        canManage(interaction, match, "delete", undefined, managerRoleId, member),
-    );
+  const matches = store.list(interaction.guild.id, season, { publishedOnly: true, candidatesOnly });
   // Verify each result channel once, including current private-thread membership.
   const access = new Map(
     await Promise.all(
@@ -331,9 +325,7 @@ async function handleRemovalAutocomplete(interaction, store, managerRoleId) {
   const focused = interaction.options.getFocused(true);
   if (focused.name === "runde") {
     const matches = season
-      ? (await removableMatches(interaction, store, managerRoleId)).filter(
-          (match) => match.season === season,
-        )
+      ? await removableMatches(interaction, store, managerRoleId, season, true)
       : [];
     await interaction.respond(roundChoices(matches, focused.value));
     return;
@@ -341,7 +333,7 @@ async function handleRemovalAutocomplete(interaction, store, managerRoleId) {
   await interaction.respond(
     focused.name === "name" && season
       ? playerChoices(
-          await removableMatches(interaction, store, managerRoleId),
+          await removableMatches(interaction, store, managerRoleId, season, true),
           season,
           String(focused.value),
         )
@@ -435,7 +427,7 @@ async function openRemoval(interaction, store, managerRoleId) {
       "Bitte eine Season von 1–9999 und optional einen Spieltag von 1–25 auswählen.",
     );
   }
-  const matches = await removableMatches(interaction, store, managerRoleId);
+  const matches = await removableMatches(interaction, store, managerRoleId, season);
   const roundInput = interaction.options.get?.("runde")?.value;
   const roundId = roundInput == null ? undefined : resolveRoundFilter(roundInput, matches);
   if (roundInput != null && (!roundId || matchday != null))
@@ -498,7 +490,7 @@ async function handleRemovalComponent(interaction, store, managerRoleId) {
   await interaction.deferUpdate();
   const query = { season: Number(season), playerId, matchday: Number(matchday), roundId };
   const matches = matchingRemovals(
-    await removableMatches(interaction, store, managerRoleId),
+    await removableMatches(interaction, store, managerRoleId, query.season),
     query,
   );
   await interaction.editReply(removalPicker(interaction, matches, query, Number(page)));

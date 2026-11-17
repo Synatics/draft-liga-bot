@@ -84,10 +84,10 @@ function logFiles(events, season, maximumBytes = 1_000_000) {
   }));
 }
 
-async function visibleEvents(interaction, events, member, managerRoleId) {
+async function visibleAuditChannels(interaction, channelIds, member, managerRoleId) {
   const access = new Map();
   await Promise.all(
-    [...new Set(events.map((event) => event.channelId))].map(async (id) => {
+    channelIds.map(async (id) => {
       try {
         const channel = await fetchCurrentChannel(interaction, id);
         if (!channel) {
@@ -108,7 +108,7 @@ async function visibleEvents(interaction, events, member, managerRoleId) {
       }
     }),
   );
-  return events.filter((event) => access.get(event.channelId));
+  return channelIds.filter((id) => access.get(id));
 }
 
 async function handleAuditCommand(interaction, database, config) {
@@ -128,12 +128,13 @@ async function handleAuditCommand(interaction, database, config) {
       "Nur Teilnehmer und die Ligaverwaltung dürfen das Protokoll anfordern.",
     );
   }
-  const events = await visibleEvents(
+  const channels = await visibleAuditChannels(
     interaction,
-    database.auditEvents(interaction.guild.id, season),
+    database.auditChannels(interaction.guild.id, season),
     member,
     config.managerRoleId,
   );
+  const events = database.auditEvents(interaction.guild.id, season, channels);
   const files = logFiles(events, season);
   if (!files.length) {
     await interaction.editReply({

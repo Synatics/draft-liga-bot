@@ -238,17 +238,16 @@ function parseMatchesDocument(text) {
 class MatchStore {
   /**
    * @param {string} filePath JSON path, or database path when storage is supplied.
-   * @param {Pick<import('./database').LigaDatabase, 'readMatches' | 'listMatches' | 'saveMatches'>} [storage]
+   * @param {import('./database').LigaDatabase} [storage]
    */
   constructor(filePath, storage) {
     this.filePath = filePath;
     this.storage = storage;
-    /** @type {Match[]} */
+    if (storage) return;
+    /** @type {Match[]} Only used by the legacy JSON file adapter. */
     this.matches = [];
     try {
-      const data = parseMatchesDocument(
-        storage ? storage.readMatches() : readFileSync(filePath, "utf8"),
-      );
+      const data = parseMatchesDocument(readFileSync(filePath, "utf8"));
       this.matches = data.matches;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -256,25 +255,29 @@ class MatchStore {
           MatchStoreError,
           "Das Replay-Archiv konnte nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
           error,
-          { operation: "archive.read", file: storage ? "liga.sqlite" : "matches.json" },
+          { operation: "archive.read", file: "matches.json" },
         );
       }
       // Check the data directory before the bot accepts its first report.
-      this.save([]);
+      this.saveJson([]);
     }
   }
 
   /** @param {string} guildId @param {number} [season] @returns {Match[]} */
-  list(guildId, season) {
+  list(guildId, season, { candidatesOnly = false, publishedOnly = false } = {}) {
     try {
-      return this.storage
-        ? this.storage.listMatches(guildId, season)
-        : structuredClone(
-            this.matches.filter(
-              (match) =>
-                match.guildId === guildId && (season === undefined || match.season === season),
-            ),
-          );
+      if (this.storage)
+        return candidatesOnly
+          ? this.storage.replayCandidates(guildId, season, publishedOnly)
+          : this.storage.listMatches(guildId, season, publishedOnly);
+      return structuredClone(
+        this.matches.filter(
+          (match) =>
+            match.guildId === guildId &&
+            (season === undefined || match.season === season) &&
+            (!publishedOnly || match.publication?.status === "published"),
+        ),
+      );
     } catch (error) {
       throw causedError(
         MatchStoreError,
@@ -285,9 +288,31 @@ class MatchStore {
     }
   }
 
+  findReplays(guildId, season, playerId, channelIds, filters) {
+    if (this.storage)
+      return this.storage.findReplays(guildId, season, playerId, channelIds, filters);
+    return this.list(guildId, season).filter(
+      (match) =>
+        channelIds.includes(match.channelId) &&
+        (filters.matchday == null || match.matchday === filters.matchday) &&
+        (!filters.roundId || roundOf(match).id === filters.roundId) &&
+        match.players.some((player) => player.id === playerId),
+    );
+  }
+
+  lookup(id, guildId) {
+    if (typeof id !== "string") return undefined;
+    const match = this.storage
+      ? this.storage.getReport(id, guildId)
+      : this.matches.find(
+          (entry) => entry.id === id && (guildId === undefined || entry.guildId === guildId),
+        );
+    return match?.id === id ? match : undefined;
+  }
+
   /** @param {string} id @param {string} guildId @returns {Match} */
   get(id, guildId) {
-    const match = this.matches.find((entry) => entry.id === id && entry.guildId === guildId);
+    const match = guildId && this.lookup(id, guildId);
     if (!match)
       throw new MatchStoreError(
         "Dieser Report wurde im Archiv nicht gefunden oder bereits entfernt.",
@@ -296,12 +321,14 @@ class MatchStore {
   }
 
   findByMessage(guildId, channelId, messageId) {
-    const found = this.matches.filter(
-      (entry) =>
-        entry.guildId === guildId &&
-        entry.channelId === channelId &&
-        entry.publication?.messageId === messageId,
-    );
+    const found = this.storage
+      ? this.storage.reportsByMessage(guildId, channelId, messageId)
+      : this.matches.filter(
+          (entry) =>
+            entry.guildId === guildId &&
+            entry.channelId === channelId &&
+            entry.publication?.messageId === messageId,
+        );
     if (found.length !== 1)
       throw new MatchStoreError(
         "Dieser Post ist nicht eindeutig mit dem Replay-Archiv verknüpft. Ältere Posts ohne gespeicherte Nachrichten-ID müssen manuell geprüft werden.",
@@ -309,26 +336,25 @@ class MatchStore {
     return structuredClone(found[0]);
   }
 
+  missingButtons() {
+    return this.storage
+      ? this.storage.reportsMissingButtons()
+      : this.matches.filter(
+          (entry) => entry.publication?.status === "published" && entry.controlsVersion !== 1,
+        );
+  }
+
   /** @param {import('../shared/data-types').MatchSnapshot} match @returns {Match} */
   add(match) {
     // Keep the match identity independent of the winner; ownership is stored separately.
     /** @type {Match} */
     const record = matchData(match);
-    const duplicate = this.matches.find(
-      (entry) =>
-        sameMatch(entry, record) ||
-        (entry.change?.kind === "edit" && sameMatch(entry.change.target, record)),
-    );
-    if (duplicate) return structuredClone(duplicate);
-    do {
-      record.id = randomBytes(12).toString("hex");
-    } while (this.matches.some((entry) => entry.id === record.id));
+    record.id = randomBytes(12).toString("hex");
     record.publication = { status: "pending" };
     if (match.reporter) record.reporter = structuredClone(match.reporter);
     if (match.result) record.result = structuredClone(match.result);
     if (match.reporter) record.createdAt = new Date().toISOString();
-    this.save([...this.matches, record], undefined, record);
-    return structuredClone(record);
+    return this.persist(record);
   }
 
   beginChange(id, guildId, expectedRevision, change, actor) {
@@ -342,45 +368,25 @@ class MatchStore {
       throw new MatchStoreError("Der Report wurde noch nicht bestätigt veröffentlicht.");
     const operation = { ...structuredClone(change), ...(actor ? { actor } : {}) };
     validateChange(operation, match);
-    if (
-      change.kind === "edit" &&
-      this.matches.some(
-        (entry) =>
-          entry.id !== id &&
-          (sameMatch(entry, change.target) ||
-            (entry.change?.kind === "edit" && sameMatch(entry.change.target, change.target))),
-      )
-    ) {
-      throw new MatchStoreError(
-        "Für diese Angaben existiert bereits ein anderer Report. Bitte prüfe die Season, den Spieltag und den Replay-Link.",
-      );
-    }
-    this.save(
-      this.matches.map((entry) => (entry.id === id ? { ...entry, change: operation } : entry)),
-      undefined,
-      match,
-    );
+    this.persist({ ...match, change: operation }, match);
   }
 
   finishChange(id, guildId, cancel = false, actor) {
     const match = this.get(id, guildId);
     if (!match.change) throw new MatchStoreError("Für diesen Report läuft keine Änderung.");
     if (!cancel && match.change.kind === "delete") {
-      this.save(
-        this.matches.filter((entry) => entry.id !== id),
-        {
-          id: `${id}:deleted:${(match.revision || 0) + 1}`,
-          action: "deleted",
-          guildId,
-          season: match.season,
-          channelId: match.channelId,
-          reportId: id,
-          messageId: match.publication.messageId,
-          actor: match.change.actor || actor || null,
-          before: snapshot(match),
-          after: null,
-        },
-      );
+      this.persist(null, match, {
+        id: `${id}:deleted:${(match.revision || 0) + 1}`,
+        action: "deleted",
+        guildId,
+        season: match.season,
+        channelId: match.channelId,
+        reportId: id,
+        messageId: match.publication.messageId,
+        actor: match.change.actor || actor || null,
+        before: snapshot(match),
+        after: null,
+      });
       return;
     }
     const { change, ...previous } = match;
@@ -395,8 +401,9 @@ class MatchStore {
           controlsVersion: 1,
           revision: (match.revision || 0) + 1,
         };
-    this.save(
-      this.matches.map((entry) => (entry.id === id ? record : entry)),
+    this.persist(
+      record,
+      match,
       cancel
         ? undefined
         : {
@@ -411,15 +418,14 @@ class MatchStore {
             before: snapshot(previous),
             after: snapshot(record),
           },
-      match,
     );
   }
 
   setPublication(id, publication) {
     validatePublication(publication);
-    const index = typeof id === "string" ? this.matches.findIndex((match) => match.id === id) : -1;
-    if (index < 0) throw new MatchStoreError("Das Match wurde im Replay-Archiv nicht gefunden.");
-    const previous = this.matches[index].publication.status;
+    const match = this.lookup(id);
+    if (!match) throw new MatchStoreError("Das Match wurde im Replay-Archiv nicht gefunden.");
+    const previous = match.publication.status;
     const next = publication.status;
     if (!(
       (previous === "pending" && next === "sending") ||
@@ -427,15 +433,14 @@ class MatchStore {
     )) {
       throw new MatchStoreError("Ungültiger Wechsel des Veröffentlichungsstatus.");
     }
-    const matches = [...this.matches];
-    matches[index] = {
-      ...matches[index],
+    const record = {
+      ...match,
       publication: { ...publication },
       ...(publication.status === "published" ? { controlsVersion: 1 } : {}),
     };
-    const record = matches[index];
-    this.save(
-      matches,
+    this.persist(
+      record,
+      match,
       publication.status !== "published"
         ? undefined
         : {
@@ -450,42 +455,84 @@ class MatchStore {
             before: null,
             after: snapshot(record),
           },
-      record,
     );
   }
 
   markControlsInstalled(id, guildId) {
     const record = this.get(id, guildId);
-    this.save(
-      this.matches.map((entry) => (entry.id === id ? { ...entry, controlsVersion: 1 } : entry)),
-      undefined,
-      record,
+    this.persist({ ...record, controlsVersion: 1 }, record);
+  }
+
+  findDuplicate(target, exceptId) {
+    const candidates = this.storage ? this.storage.possibleDuplicates(target) : this.matches;
+    // An interrupted edit reserves both its original match and its proposed target.
+    return candidates.find(
+      (entry) =>
+        (exceptId === undefined || entry.id !== exceptId) &&
+        (sameMatch(entry, target) ||
+          (entry.change?.kind === "edit" && sameMatch(entry.change.target, target))),
     );
   }
 
   /**
-   * Commit before updating the cache; SQLite commits the report and audit event together.
-   * @param {Match[]} matches
+   * Insert, update or delete exactly one report, together with its audit event.
+   * @param {Match | null} next
+   * @param {Match} [previous]
    * @param {import('../shared/data-types').AuditWrite} [event]
-   * @param {Match | import('../shared/data-types').AuditWrite} [record] Safe diagnostic context source.
    */
-  save(matches, event, record = event) {
+  persist(next, previous, event) {
+    const record = next || previous;
     const context = {
       ...record,
       operation: "archive.write",
       file: this.storage ? "liga.sqlite" : "matches.json",
-      reportId: record?.reportId || record?.id,
-      messageId: record?.messageId || record?.publication?.messageId,
+      reportId: record.id,
+      messageId: record.publication?.messageId,
     };
     try {
-      if (this.storage) this.storage.saveMatches(matches, event);
-      else writeJsonAtomic(this.filePath, { version: 1, matches });
+      const write = () => {
+        if (!previous) {
+          const existing = this.findDuplicate(next);
+          if (existing) return structuredClone(existing);
+          while (this.lookup(next.id)) next.id = randomBytes(12).toString("hex");
+        } else {
+          if (revisionOf(this.get(previous.id, previous.guildId)) !== revisionOf(previous))
+            throw new MatchStoreError(
+              "Dieser Report wurde inzwischen geändert. Bitte öffne die Aktion erneut am Ergebnispost.",
+            );
+          if (
+            !previous.change &&
+            next?.change?.kind === "edit" &&
+            this.findDuplicate(next.change.target, previous.id)
+          )
+            throw new MatchStoreError(
+              "Für diese Angaben existiert bereits ein anderer Report. Bitte prüfe die Season, den Spieltag und den Replay-Link.",
+            );
+        }
+        if (this.storage) {
+          this.storage.writeReport(next, previous);
+          if (event) this.storage.writeEvent(event);
+        } else {
+          if (!previous) this.saveJson([...this.matches, next]);
+          else if (next)
+            this.saveJson(this.matches.map((entry) => (entry.id === previous.id ? next : entry)));
+          else this.saveJson(this.matches.filter((entry) => entry.id !== previous.id));
+        }
+        return structuredClone(next);
+      };
+      return this.storage ? this.storage.transaction(write) : write();
     } catch (error) {
+      if (error instanceof MatchStoreError) throw error;
       const message = this.storage
         ? "Das Replay und sein Änderungsprotokoll konnten nicht gespeichert werden. Bitte Datenbank und freien Speicher prüfen."
         : "Das Replay konnte nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.";
       throw causedError(MatchStoreError, message, error, context);
     }
+  }
+
+  saveJson(matches) {
+    if (this.storage) throw new Error("Dieser Speicher verwendet SQLite.");
+    writeJsonAtomic(this.filePath, { version: 1, matches });
     this.matches = structuredClone(matches);
   }
 }
@@ -498,4 +545,5 @@ module.exports = {
   matchData,
   revisionOf,
   snapshot,
+  validateMatch,
 };

@@ -145,11 +145,11 @@ test("league settings, reports and role changes work together without exposing r
     prepare(env) {
       const state = prepareStartup(env);
       state.settingsStore.now = () => now;
-      const save = state.database.saveMatches.bind(state.database);
-      state.database.saveMatches = (matches, event) => {
+      const save = state.database.writeReport.bind(state.database);
+      state.database.writeReport = (record, previous) => {
         if (failSaving)
           throw Object.assign(new Error("write failed: private-request-data"), { code: "ENOSPC" });
-        save(matches, event);
+        save(record, previous);
       };
       return state;
     },

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
+const { MatchStore } = require("../src/storage/match-store");
 const {
   ChannelType,
   Collection,
@@ -34,7 +35,9 @@ const match = (overrides = {}) => ({
   ...overrides,
 });
 const storeWith = (matches) => ({
-  list: (guildId) => matches.filter((entry) => entry.guildId === guildId),
+  list: (guildId, season) =>
+    matches.filter((entry) => entry.guildId === guildId && entry.season === season),
+  findReplays: MatchStore.prototype.findReplays,
 });
 
 function interaction({ season = 4, name = JAN, matchday = null } = {}) {

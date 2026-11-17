@@ -274,7 +274,7 @@ async function openCorrection(f) {
 
 test("historical corrections keep the original season and offer all 25 days without current season settings", async (t) => {
   const f = setup(t);
-  f.store.save([{ ...f.current(), season: 3, matchday: 20 }]);
+  f.store.saveJson([{ ...f.current(), season: 3, matchday: 20 }]);
   const command = await openCorrection(f);
   const days = command.modal.components[0].component.options;
   assert.equal(days.length, 25);
@@ -298,7 +298,7 @@ test("historical corrections keep the original season and offer all 25 days with
 
 test("opening the modal leaves data unchanged and requires a valid day if the old day exceeds the new limit", async (t) => {
   const f = setup(t);
-  f.store.save([{ ...f.current(), matchday: 10 }]);
+  f.store.saveJson([{ ...f.current(), matchday: 10 }]);
   const original = f.current();
   const command = await openCorrection(f);
   const days = command.modal.components[0].component.options;
@@ -656,7 +656,7 @@ test("server permissions cannot replace a revoked management role at deletion co
 
 test("legacy reports with unknown reporters require management, and buttons must belong to the original bot post", async (t) => {
   const f = setup(t);
-  f.store.save([{ ...f.current(), reporter: undefined }]);
+  f.store.saveJson([{ ...f.current(), reporter: undefined }]);
   await assert.rejects(
     openManagement(f.interaction(), f.store, f.manager, ROLE, f.settings, MANAGER),
     /meldende Person/,
@@ -684,7 +684,7 @@ test("legacy reports with unknown reporters require management, and buttons must
 
 test("known older posts receive persistent buttons once; missing posts remain available for archive cleanup", async (t) => {
   const f = setup(t);
-  f.store.save([{ ...f.current(), controlsVersion: undefined }]);
+  f.store.saveJson([{ ...f.current(), controlsVersion: undefined }]);
   const client = { user: { id: BOT }, guilds: { cache: new Collection([[GUILD, f.guild]]) } };
   await installReportButtons(client, f.store);
   assert.equal(
@@ -694,7 +694,7 @@ test("known older posts receive persistent buttons once; missing posts remain av
   assert.equal(f.current().controlsVersion, 1);
   await installReportButtons(client, f.store);
   assert.equal(f.edits.length, 1);
-  f.store.save([{ ...f.current(), controlsVersion: undefined }]);
+  f.store.saveJson([{ ...f.current(), controlsVersion: undefined }]);
   f.removePost();
   await installReportButtons(client, f.store);
   assert.equal(f.store.list(GUILD).length, 1);
@@ -865,7 +865,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
     ),
     /anderen Person/,
   );
-  f.store.save([{ ...f.current(), revision: 1 }]);
+  f.store.saveJson([{ ...f.current(), revision: 1 }]);
   await assert.rejects(
     handleManagementComponent(
       f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
@@ -877,7 +877,7 @@ test("invalid, foreign, stale or no-longer-authorized forms cannot change any da
     ),
     /inzwischen geändert/,
   );
-  f.store.save([{ ...f.current(), reporter: { id: OTHER, name: "Lennart" } }]);
+  f.store.saveJson([{ ...f.current(), reporter: { id: OTHER, name: "Lennart" } }]);
   await assert.rejects(
     handleManagementComponent(
       f.interaction({ customId: command.modal.custom_id, fields: f.fields() }),
@@ -1100,7 +1100,7 @@ test("removal choices reject stale records, foreign users, revoked access and in
     /keinen Zugriff/,
   );
   f.channel.permissionsFor = () => permissions();
-  f.store.save(f.store.list(GUILD).map((match) => ({ ...match, revision: 1 })));
+  f.store.saveJson(f.store.list(GUILD).map((match) => ({ ...match, revision: 1 })));
   await assert.rejects(
     handleManagementComponent(
       f.admin({ customId, values }),
@@ -1146,7 +1146,7 @@ test("removal suggestions retain historical names and require explicit selection
   });
   await handleRemovalAutocomplete(autocomplete, f.store, MANAGER);
   assert.deepEqual(autocomplete.choices, [{ name: "Roran321", value: JAN }]);
-  f.store.save(
+  f.store.saveJson(
     f.store.list(GUILD).map((match) => ({
       ...match,
       players: match.players.map((player) => ({ ...player, name: "Max" })),

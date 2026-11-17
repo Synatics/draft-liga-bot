@@ -4,7 +4,9 @@ const fs = require("node:fs");
 const { dirname, join } = require("node:path");
 const { tmpdir } = require("node:os");
 const { spawnSync } = require("node:child_process");
-const { LigaDatabase, DATABASE_NAME } = require("../src/storage/database");
+const { DatabaseSync } = require("node:sqlite");
+const { createHash } = require("node:crypto");
+const { LigaDatabase, DATABASE_NAME, checkSnapshot } = require("../src/storage/database");
 const { MatchStore, revisionOf } = require("../src/storage/match-store");
 const { LeagueSettingsStore } = require("../src/storage/league-settings");
 const { SqliteBackups } = require("../src/storage/database-backups");
@@ -298,14 +300,283 @@ test("the backup CLI selects SQLite without a Discord login and a corrupt source
   assert.deepEqual(fs.readdirSync(directory), before);
 });
 
-test("inconsistent SQL indexes and unknown database versions fail closed without resetting stored reports", (t) => {
+test("inconsistent results and unknown database versions are rejected without resetting stored reports", (t) => {
   const f = setup(t);
   const db = f.open();
   new MatchStore(f.filePath, db).add(data);
-  db.db.prepare("UPDATE reports SET guild_id=?").run("300000000000000002");
-  assert.throws(() => db.validate(), /Indizes/);
+  assert.throws(() => db.db.prepare("UPDATE reports SET winner_id=loser_id").run(), /CHECK/);
   assert.equal(db.db.prepare("SELECT count(*) AS count FROM reports").get().count, 1);
   db.db.exec("PRAGMA user_version=999");
   db.close();
   assert.throws(() => f.open(), /Datenbankversion/);
+});
+
+// A fixture in the actual format of the 2.0 release, independent of the new row mappings.
+function seedVersionOne(filePath) {
+  const db = new DatabaseSync(filePath);
+  const season = {
+    season: 4,
+    matchdays: 3,
+    startDate: "2026-10-19",
+    history: {
+      3: { season: 3, matchdays: 9, currentMatchday: 4 },
+    },
+  };
+  const old = {
+    guildId: GUILD,
+    channelId: CHANNEL,
+    season: 3,
+    matchday: 1,
+    players: [JAN, MAX],
+    link: "https://example.org/old",
+  };
+  const oldKey = "legacy-" + createHash("sha256").update(JSON.stringify(old)).digest("hex");
+  const record = {
+    ...data,
+    id: "a".repeat(24),
+    revision: 2,
+    controlsVersion: 1,
+    createdAt: "2026-10-19T11:10:00.000Z",
+    matchday: undefined,
+    round: { id: "semifinal", kind: "playoffs" },
+    publication: { status: "published", messageId: MESSAGE },
+    change: { kind: "delete", actor: MAX },
+  };
+  const removed = {
+    id: "earlier:deleted",
+    action: "deleted",
+    reportId: "b".repeat(24),
+    guildId: GUILD,
+    season: 3,
+    channelId: CHANNEL,
+    messageId: null,
+    at: "2026-10-12T12:34:56.789Z",
+    actor: JAN,
+    before: old,
+    after: null,
+  };
+  try {
+    db.exec(`PRAGMA application_id=0x444c424f; PRAGMA user_version=1;
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO metadata VALUES ('initialized','2026-10-19T00:00:00.000Z');
+      CREATE TABLE settings (guild_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE reports (id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, season INTEGER NOT NULL, channel_id TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX reports_by_season ON reports(guild_id,season);
+      CREATE TABLE audit_events (id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, season INTEGER NOT NULL, report_id TEXT NOT NULL, occurred_at TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX audit_by_season ON audit_events(guild_id,season,occurred_at);`);
+    db.prepare("INSERT INTO settings VALUES(?,?)").run(GUILD, JSON.stringify(season));
+    const insert = db.prepare("INSERT INTO reports VALUES(?,?,?,?,?)");
+    insert.run(oldKey, GUILD, 3, CHANNEL, JSON.stringify(old));
+    insert.run(record.id, GUILD, 4, CHANNEL, JSON.stringify(record));
+    db.prepare("INSERT INTO audit_events VALUES(?,?,?,?,?,?)").run(
+      removed.id,
+      GUILD,
+      3,
+      removed.reportId,
+      removed.at,
+      JSON.stringify(removed),
+    );
+    return { record: JSON.parse(JSON.stringify(record)), old, oldKey, removed };
+  } finally {
+    db.close();
+  }
+}
+
+test("v1 upgrades once with a restorable v1 backup, historical plans, pending operation, unknown outcome and deleted report log intact", (t) => {
+  const f = setup(t);
+  const { record, old, oldKey, removed } = seedVersionOne(f.filePath);
+  fs.writeFileSync(join(f.directory, "matches.json"), "outdated JSON must never be read");
+  const db = f.open();
+  assert.equal(db.db.prepare("PRAGMA user_version").get().user_version, 2);
+  assert.deepEqual(db.getReport(record.id, GUILD), record);
+  assert.deepEqual(db.listMatches(GUILD, 3), [old]);
+  assert.equal(db.db.prepare("SELECT id FROM reports WHERE season=3").get().id, oldKey);
+  assert.deepEqual(db.auditEvents(GUILD, 3), [removed]);
+  assert.equal(db.getSeason(GUILD).season, 4);
+  assert.equal(db.getSeason(GUILD, 3).currentMatchday, 4);
+  assert.equal(
+    db.db.prepare("SELECT winner_name FROM report_overview WHERE id=?").get(record.id).winner_name,
+    "Jan",
+  );
+  const copyDir = fs
+    .readdirSync(f.directory)
+    .find((name) => name.startsWith("migration-sqlite-v1-"));
+  const copyPath = join(f.directory, copyDir, DATABASE_NAME);
+  assert.equal(checkSnapshot(copyPath), 1);
+  const raw = new DatabaseSync(copyPath, { readOnly: true });
+  try {
+    assert.deepEqual(
+      JSON.parse(raw.prepare("SELECT data FROM reports WHERE id=?").get(record.id).data),
+      record,
+    );
+  } finally {
+    raw.close();
+  }
+  db.close();
+  const restarted = f.open();
+  assert.equal(
+    fs.readdirSync(f.directory).filter((name) => name.startsWith("migration-sqlite-v1-")).length,
+    1,
+  );
+  const store = new MatchStore(f.filePath, restarted);
+  store.finishChange(record.id, GUILD);
+  assert.deepEqual(restarted.listMatches(GUILD, 4), []);
+  assert.deepEqual(restarted.auditEvents(GUILD, 4)[0].actor, MAX);
+  assert.equal(checkSnapshot(copyPath), 1);
+});
+
+test("an inconsistent v1 file is rejected and a failed DDL migration rolls back before retrying", (t) => {
+  const f = setup(t);
+  const { record } = seedVersionOne(f.filePath);
+  const modify = (fn) => {
+    const db = new DatabaseSync(f.filePath);
+    try {
+      fn(db);
+    } finally {
+      db.close();
+    }
+  };
+  modify((db) => db.prepare("UPDATE reports SET season=2 WHERE id=?").run(record.id));
+  assert.throws(() => f.open(), /Indizes/);
+  modify((db) => {
+    db.prepare("UPDATE reports SET season=4 WHERE id=?").run(record.id);
+    db.exec("CREATE TABLE seasons (unrelated TEXT)");
+  });
+  assert.throws(() => f.open(), /already exists/);
+  modify((db) => {
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM reports").get().n, 2);
+    assert.deepEqual(
+      JSON.parse(db.prepare("SELECT data FROM reports WHERE id=?").get(record.id).data),
+      record,
+    );
+    assert.equal(
+      db.prepare("SELECT 1 FROM sqlite_schema WHERE name='reports_v1'").get(),
+      undefined,
+    );
+    db.exec("DROP TABLE seasons");
+  });
+  assert.deepEqual(f.open().getReport(record.id, GUILD), record);
+});
+
+test("overlapping database handles preserve unrelated reports and historical seasons and reject stale changes", (t) => {
+  const f = setup(t),
+    a = f.open(),
+    b = f.open();
+  const first = new MatchStore(f.filePath, a),
+    second = new MatchStore(f.filePath, b);
+  const report = first.add(data);
+  const other = second.add({ ...data, matchday: 2 });
+  assert.equal(second.add(data).id, report.id);
+  first.setPublication(report.id, { status: "sending" });
+  first.setPublication(report.id, { status: "published", messageId: MESSAGE });
+  const stale = revisionOf(second.get(report.id, GUILD));
+  first.beginChange(report.id, GUILD, stale, { kind: "delete" }, JAN);
+  assert.throws(
+    () => second.beginChange(report.id, GUILD, stale, { kind: "delete" }, MAX),
+    /inzwischen geändert/,
+  );
+  assert.deepEqual(second.get(report.id, GUILD).change.actor, JAN);
+  assert.deepEqual(first.get(other.id, GUILD), other);
+  const settingsA = new LeagueSettingsStore(f.filePath, undefined, a),
+    settingsB = new LeagueSettingsStore(f.filePath, undefined, b);
+  settingsA.setSeason(GUILD, 4, 9, "19.10.2026");
+  settingsB.setSeason(GUILD, 5, 10, "26.10.2026");
+  assert.equal(settingsA.get(GUILD).season, 5);
+  settingsA.setSeason(GUILD, 4, 8, "19.10.2026");
+  assert.equal(settingsB.getSeason(GUILD, 5).matchdays, 10);
+  assert.equal(settingsB.get(GUILD).matchdays, 8);
+});
+
+test("live SQL balances count only current published results, scoped by player, opponent, guild, season and readable channels", (t) => {
+  const f = setup(t),
+    db = f.open(),
+    store = new MatchStore(f.filePath, db);
+  const other = { id: "200000000000000009", name: "Lennart" },
+    hidden = "400000000000000009";
+  let n = 0;
+  const game = (winner, loser, overrides = {}, published = true) => {
+    const serial = ++n;
+    const record = store.add({
+      ...data,
+      players: [winner, loser],
+      result: { winnerId: winner.id, loserId: loser.id, score: "2-1" },
+      link: `https://example.org/game-${serial}`,
+      ...overrides,
+    });
+    if (published) {
+      store.setPublication(record.id, { status: "sending" });
+      store.setPublication(record.id, {
+        status: "published",
+        messageId: String(BigInt(MESSAGE) + BigInt(serial)),
+      });
+    }
+    return record;
+  };
+  const first = game(JAN, other);
+  game({ ...JAN, name: "Jan neu" }, other);
+  game(JAN, other, { season: 5 });
+  game(JAN, other);
+  game(other, JAN);
+  game(MAX, JAN);
+  game(JAN, other, { channelId: hidden });
+  game(JAN, other, { guildId: "300000000000000009" });
+  game(JAN, other, { result: undefined });
+  game(JAN, other, {}, false);
+  const counts = (options) => db.countResults(GUILD, JAN.id, [CHANNEL], options);
+  assert.deepEqual(counts({ opponentId: other.id }), { wins: 4, losses: 1 });
+  assert.deepEqual(counts({ opponentId: other.id, season: 4 }), { wins: 3, losses: 1 });
+  assert.deepEqual(counts(), { wins: 4, losses: 2 });
+  assert.deepEqual(db.countResults(GUILD, other.id, [CHANNEL], { opponentId: JAN.id }), {
+    wins: 1,
+    losses: 4,
+  });
+  assert.deepEqual(db.countResults(GUILD, JAN.id, []), { wins: 0, losses: 0 });
+  // An edit to one report must not rewrite any of the other rows.
+  db.db
+    .exec(`CREATE TEMP TABLE touched(id TEXT); CREATE TEMP TRIGGER changed AFTER UPDATE ON reports
+    BEGIN INSERT INTO touched VALUES(NEW.id); END;`);
+  const saved = store.get(first.id, GUILD);
+  const target = {
+    guildId: GUILD,
+    channelId: CHANNEL,
+    season: 4,
+    matchday: 1,
+    players: saved.players,
+    link: saved.link,
+  };
+  const updated = { winnerId: other.id, loserId: JAN.id, score: "1-0" };
+  const embed = createResultMessage(
+    other.name,
+    JAN.name,
+    updated.score,
+    saved.link,
+    target,
+  ).embeds[0].toJSON();
+  store.beginChange(
+    first.id,
+    GUILD,
+    revisionOf(saved),
+    { kind: "edit", target, embed, result: updated },
+    JAN,
+  );
+  assert.deepEqual(counts({ opponentId: other.id }), { wins: 4, losses: 1 });
+  store.finishChange(first.id, GUILD);
+  assert.deepEqual(counts({ opponentId: other.id }), { wins: 3, losses: 2 });
+  store.beginChange(
+    first.id,
+    GUILD,
+    revisionOf(store.get(first.id, GUILD)),
+    { kind: "delete" },
+    JAN,
+  );
+  store.finishChange(first.id, GUILD);
+  assert.deepEqual(counts({ opponentId: other.id }), { wins: 3, losses: 1 });
+  assert.deepEqual(
+    db.db
+      .prepare("SELECT DISTINCT id FROM touched")
+      .all()
+      .map((row) => row.id),
+    [first.id],
+  );
 });

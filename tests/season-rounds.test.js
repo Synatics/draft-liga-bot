@@ -53,7 +53,8 @@ function fixture(t) {
 test("a playoff schedule advances from week 9 through redraft to semifinals/final at Berlin Monday midnight", (t) => {
   const f = fixture(t);
   f.settings.setSeason(GUILD, 5, 9, "19.10.2026", { format: "playoffs", redraft: true });
-  const stored = f.db.readSettings();
+  const changes = () => f.db.db.prepare("SELECT total_changes() AS n").get().n;
+  const stored = changes();
   assert.equal(roundLabel(f.at("2026-12-20T22:59:59.999Z").currentRound), "Spieltag 9");
   const pause = f.at("2026-12-20T23:00:00.000Z");
   assert.equal(pause.week, 10);
@@ -70,7 +71,7 @@ test("a playoff schedule advances from week 9 through redraft to semifinals/fina
   assert.equal(f.at("2026-10-18T22:00:00Z").status, "active");
   assert.equal(f.at("2026-10-25T22:59:59Z").currentRound.id, "matchday-1");
   assert.equal(f.at("2026-10-25T23:00:00Z").currentRound.id, "matchday-2");
-  assert.equal(f.db.readSettings(), stored, "Calendar progress must not write to disk");
+  assert.equal(changes(), stored, "Calendar progress must not write to disk");
 });
 
 test("home and away rounds keep consecutive matchdays and skip only the optional redraft week", (t) => {
@@ -103,7 +104,7 @@ test("all playoff presets end in a final, and invalid formats cannot replace the
     assert.equal(settings.rounds[9].id, first);
     assert.equal(settings.rounds.at(-1).id, "final");
   }
-  const previous = f.db.readSettings();
+  const previous = f.db.getSeason(GUILD);
   for (const [days, options] of [
     [9, { format: "home-away" }],
     [9, { format: "league", redraft: true }],
@@ -113,7 +114,7 @@ test("all playoff presets end in a final, and invalid formats cannot replace the
     [9, { format: "unknown" }],
   ]) {
     assert.throws(() => f.settings.setSeason(GUILD, 6, days, "26.10.2026", options));
-    assert.equal(f.db.readSettings(), previous);
+    assert.deepEqual(f.db.getSeason(GUILD), previous);
     assert.equal(f.settings.get(GUILD).season, 5);
   }
   assert.equal(buildRounds(25).length, 25);
@@ -166,7 +167,12 @@ test("SQLite restarts and backups retain historical season plans without exposin
   const restored = new LeagueSettingsStore(restoredDb.filePath, undefined, restoredDb);
   assert.equal(restored.getSeason(GUILD, 5).format, "playoffs");
   assert.equal(restored.getSeason(GUILD, 6).rounds[10].leg, "second");
-  const corrupt = JSON.parse(restoredDb.readSettings());
+  const corrupt = {
+    version: 1,
+    guilds: {
+      [GUILD]: { ...restoredDb.getSeason(GUILD), history: { 5: restoredDb.getSeason(GUILD, 5) } },
+    },
+  };
   corrupt.guilds[GUILD].history[5].rounds[9] = { id: "final", kind: "playoffs" };
   assert.throws(() => parseSettingsDocument(JSON.stringify(corrupt)), /Rundenplan/);
 });

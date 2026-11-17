@@ -64,7 +64,7 @@
 
 /**
  * get() returns a clone with calendar progress; getSeason() also reads historical plans.
- * Raw per-guild storage retains previous settings in history[season], without nested history.
+ * SQLite keeps one row per guild and season; the legacy JSON format uses history[season].
  * Advancing a week does not write to storage. Playoffs/breaks have no numeric matchday.
  * @typedef {SeasonSettings & {currentMatchday?: number, currentRound?: SeasonRound,
  *   nextRound?: PlayableRound, week?: number, status?: 'upcoming' | 'active' | 'redraft' | 'finished'}} ActiveSeason

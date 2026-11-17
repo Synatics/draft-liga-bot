@@ -233,7 +233,7 @@ test("failures at each startup stage close owned resources and reject without ex
     assert.equal(f.closeCalls, 1, failAt);
     assert.equal(f.destroyCalls, failAt === "client" ? 0 : 1, failAt);
     assert.equal(f.calls.includes("backups"), failAt === "backups");
-    assert.throws(() => f.state.database.readMatches(), /closed|not open/i);
+    assert.throws(() => f.state.database.listMatches(GUILD), /closed|not open/i);
     assert.equal(process.exitCode, initialExitCode);
     assert.ok(f.logs.every((message) => !message.includes(TOKEN)));
   }

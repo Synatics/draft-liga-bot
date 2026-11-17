@@ -1,7 +1,7 @@
 const { mkdirSync, readdirSync, lstatSync, renameSync, unlinkSync, rmdirSync } = require("node:fs");
 const { dirname, join, resolve } = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { LigaDatabase, DATABASE_NAME } = require("./database");
+const { checkSnapshot, DATABASE_NAME } = require("./database");
 const { KEEP_COUNT } = require("./data-backups");
 
 const NAME = /^backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9-]{36}$/;
@@ -19,8 +19,7 @@ class SqliteBackups {
   check(path) {
     if (!lstatSync(path).isFile())
       throw new Error("Die Sicherung muss eine reguläre SQLite-Datei sein.");
-    const database = new LigaDatabase(path, { readOnly: true });
-    database.close();
+    return checkSnapshot(path);
   }
 
   create({ force = false } = {}) {
@@ -47,25 +46,11 @@ class SqliteBackups {
     const temporary = join(this.directory, `.pending-${randomUUID()}`);
     const destination = join(this.directory, name);
     mkdirSync(temporary);
-    let database;
     try {
-      database = new LigaDatabase(this.filePath, { readOnly: true });
-      database.backup(join(temporary, DATABASE_NAME));
-      database.close();
-      database = undefined;
+      checkSnapshot(this.filePath, join(temporary, DATABASE_NAME));
       this.check(join(temporary, DATABASE_NAME));
       renameSync(temporary, destination);
     } catch (error) {
-      let failure = error;
-      try {
-        database?.close();
-      } catch (closeError) {
-        failure = new AggregateError(
-          [error, closeError],
-          "Sicherung und Schließen der Datenbank sind fehlgeschlagen.",
-          { cause: error },
-        );
-      }
       try {
         unlinkSync(join(temporary, DATABASE_NAME));
       } catch {
@@ -76,7 +61,7 @@ class SqliteBackups {
       } catch {
         /* Preserve unexpected files. */
       }
-      throw failure;
+      throw error;
     }
     const cleanupErrors = [];
     const completed = [...backups, name].sort();

@@ -184,18 +184,17 @@ class LeagueSettingsStore {
   /**
    * @param {string} filePath JSON path, or database path when storage is supplied.
    * @param {() => Date} [now]
-   * @param {Pick<import('./database').LigaDatabase, 'readSettings' | 'saveSettings'>} [storage]
+   * @param {Pick<import('./database').LigaDatabase, 'getSeason' | 'saveSeason'>} [storage]
    */
   constructor(filePath, now = () => new Date(), storage) {
     this.filePath = filePath;
     this.storage = storage;
     this.now = now;
+    if (storage) return;
     /** @type {Record<string, SeasonSettings>} */
     this.guilds = {};
     try {
-      const data = parseSettingsDocument(
-        storage ? storage.readSettings() : readFileSync(filePath, "utf8"),
-      );
+      const data = parseSettingsDocument(readFileSync(filePath, "utf8"));
       this.guilds = data.guilds;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -203,7 +202,7 @@ class LeagueSettingsStore {
           LeagueSettingsError,
           "Die gespeicherten Liga-Einstellungen konnten nicht gelesen werden. Bitte Datenspeicher und Dateiformat prüfen.",
           error,
-          { operation: "settings.read", file: storage ? "liga.sqlite" : "league-settings.json" },
+          { operation: "settings.read", file: "league-settings.json" },
         );
       }
     }
@@ -211,11 +210,12 @@ class LeagueSettingsStore {
 
   /** @param {string} guildId @returns {import('../shared/data-types').ActiveSeason} */
   get(guildId) {
-    return this.getSeason(guildId, this.guilds[guildId]?.season);
+    return this.getSeason(guildId);
   }
 
   /** Saved configuration without calendar progress or historical entries; safe to edit as a draft. */
   configuration(guildId) {
+    if (this.storage) return this.storage.getSeason(guildId);
     const stored = this.guilds[guildId];
     if (!stored) return undefined;
     const { history, ...settings } = stored;
@@ -229,8 +229,12 @@ class LeagueSettingsStore {
   }
 
   getSeason(guildId, season) {
-    const stored = this.guilds[guildId];
-    const source = stored?.season === season ? stored : stored?.history?.[season];
+    const stored = this.guilds?.[guildId];
+    const source = this.storage
+      ? this.storage.getSeason(guildId, season)
+      : season === undefined || stored?.season === season
+        ? stored
+        : stored?.history?.[season];
     const { history, ...settings } = source ?? {};
     if (!source) {
       throw new LeagueSettingsError(
@@ -278,6 +282,25 @@ class LeagueSettingsStore {
   /** @param {string} guildId @param {SeasonSettings} settings @returns {import('../shared/data-types').ActiveSeason} */
   save(guildId, settings) {
     validateSettings(settings);
+    const context = {
+      operation: "settings.write",
+      file: this.storage ? "liga.sqlite" : "league-settings.json",
+      guildId,
+      season: settings.season,
+    };
+    try {
+      if (this.storage) this.storage.saveSeason(guildId, settings);
+      else this.saveJson(guildId, settings);
+    } catch (error) {
+      const message = this.storage
+        ? "Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden."
+        : "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.";
+      throw causedError(LeagueSettingsError, message, error, context);
+    }
+    return this.get(guildId);
+  }
+
+  saveJson(guildId, settings) {
     const previous = this.guilds[guildId];
     const history = { ...previous?.history };
     if (previous && previous.season !== settings.season) {
@@ -292,24 +315,8 @@ class LeagueSettingsStore {
         ...(Object.keys(history).length ? { history } : {}),
       },
     };
-    const context = {
-      operation: "settings.write",
-      file: this.storage ? "liga.sqlite" : "league-settings.json",
-      guildId,
-      season: settings.season,
-    };
-    try {
-      if (this.storage) this.storage.saveSettings(guilds);
-      else writeJsonAtomic(this.filePath, { version: 1, guilds });
-    } catch (error) {
-      const message = this.storage
-        ? "Die Liga-Einstellungen konnten nicht in SQLite gespeichert werden."
-        : "Die Liga-Einstellungen konnten nicht gespeichert werden. Bitte prüfe den Datenordner bzw. das Railway-Volume.";
-      throw causedError(LeagueSettingsError, message, error, context);
-    }
-    // Publish the new settings only once they are safely stored on disk.
+    writeJsonAtomic(this.filePath, { version: 1, guilds });
     this.guilds = guilds;
-    return this.get(guildId);
   }
 }
 

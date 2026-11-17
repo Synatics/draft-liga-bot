@@ -183,7 +183,7 @@ test("season setup has no slash parameters and saves only after a private two-mo
   assert.match(plan, /Woche 10: Redraft/);
   assert.match(plan, /Woche 11: Playoffs · Viertelfinale/);
   assert.match(plan, /Woche 13: Playoffs · Finale/);
-  assert.equal(f.db.readSettings(), '{"version":1,"guilds":{}}');
+  assert.equal(f.db.getSeason(GUILD), undefined);
   await f.click(preview, "save");
   assert.equal(f.settings.get(GUILD).redraft, true);
   assert.equal(f.settings.get(GUILD).playoffsFrom, "quarterfinal");
@@ -194,7 +194,7 @@ test("season setup has no slash parameters and saves only after a private two-mo
 test("existing values are prefilled, going back preserves extras, and canceling or closing a modal never writes settings", async (t) => {
   const f = setup(t);
   f.settings.setSeason(GUILD, 5, 18, "26.10.2026", { format: "home-away", redraft: true });
-  const saved = f.db.readSettings();
+  const saved = f.db.getSeason(GUILD);
   const opened = await f.open();
   assert.equal(opened.modal.components[0].component.value, "5");
   assert.equal(opened.modal.components[1].component.value, "18");
@@ -222,7 +222,7 @@ test("existing values are prefilled, going back preserves extras, and canceling 
   );
   const final = await f.submit(details, { redraft: "yes" });
   await f.click(final, "cancel");
-  assert.equal(f.db.readSettings(), saved);
+  assert.deepEqual(f.db.getSeason(GUILD), saved);
   await assert.rejects(f.click(final, "save"), /abgelaufen/);
 });
 
@@ -324,17 +324,17 @@ test("two league managers cannot silently overwrite each other's settings with a
 test("storage failures leave settings intact and allow retry, while simultaneous confirmation writes only once", async (t) => {
   const f = setup(t);
   const preview = await f.preview();
-  const save = f.db.saveSettings.bind(f.db);
-  f.db.saveSettings = () => {
+  const save = f.db.saveSeason.bind(f.db);
+  f.db.saveSeason = () => {
     throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
   };
   await assert.rejects(f.click(preview, "save"), (error) => error.cause.code === "ENOSPC");
   assert.equal(f.settings.configuration(GUILD), undefined);
   let writes = 0,
     release;
-  f.db.saveSettings = (guilds) => {
+  f.db.saveSeason = (guildId, settings) => {
     writes++;
-    return save(guilds);
+    return save(guildId, settings);
   };
   const gate = new Promise((resolve) => {
     release = resolve;

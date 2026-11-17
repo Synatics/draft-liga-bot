@@ -262,8 +262,7 @@ function reportButtons(id) {
 }
 
 async function installReportButtons(client, store, logger = console) {
-  for (const record of store.matches) {
-    if (record.publication?.status !== "published" || record.controlsVersion === 1) continue;
+  for (const record of store.missingButtons()) {
     const guild = client.guilds.cache.get(record.guildId);
     if (!guild) continue;
     try {

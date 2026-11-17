@@ -8,7 +8,6 @@ const { logError, interactionContext } = require("../shared/diagnostics");
 const { isLeagueMember, currentMember, fetchReadableChannel } = require("../shared/permissions");
 const {
   matchRoundLabel,
-  roundOf,
   roundOrder,
   roundChoices,
   resolveRoundFilter,
@@ -65,7 +64,7 @@ async function searchMember(interaction, config) {
 }
 
 async function visibleMatches(interaction, store, season, member) {
-  const matches = store.list(interaction.guild.id, season);
+  const matches = store.list(interaction.guild.id, season, { candidatesOnly: true });
   const access = new Map(
     await Promise.all(
       [...new Set(matches.map((match) => match.channelId))].map(async (channelId) => {
@@ -207,12 +206,12 @@ async function handleSearchCommand(interaction, store, config = {}) {
     );
   const player = resolvePlayer(matches, season, interaction.options.getString("name", true));
   const found = player
-    ? matches.filter(
-        (match) =>
-          match.season === season &&
-          (matchday == null || match.matchday === matchday) &&
-          (!roundId || roundOf(match).id === roundId) &&
-          match.players.some((entry) => entry.id === player.id),
+    ? store.findReplays(
+        interaction.guild.id,
+        season,
+        player.id,
+        [...new Set(matches.map((match) => match.channelId))],
+        { matchday, roundId },
       )
     : [];
   const messages = resultMessages(found);

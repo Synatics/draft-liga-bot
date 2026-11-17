@@ -193,20 +193,24 @@ Teilnehmer erhalten nur Einträge aus lesbaren Kanälen; private Thread-Mitglied
 
 Zugestellte Such-DMs und Logdateien sind Momentaufnahmen und werden nach einer Korrektur nicht rückwirkend verändert. Für den aktuellen Stand erneut abrufen. Das Protokoll hat im Bot keine Bearbeiten-/Löschen-Funktion. Wer direkten Dateizugriff auf den Server hat, besitzt weiterhin technische Kontrolle über die Datenbank.
 
-## Speicherung und JSON-Übernahme
+## SQLite-Speicherung und Migration
 
 Die aktive Datei ist **`liga.sqlite`** im Datenverzeichnis:
 
-| Tabelle        | Inhalt                                                                                    |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| `settings`     | Aktuelle Liga-Konfiguration pro Server und frühere Seasonpläne unter `history[season]`    |
-| `reports`      | Suchmetadaten, Melder, Ergebnis, Versandstatus, Nachrichten-ID und vorgemerkte Änderungen |
-| `audit_events` | Eigenständige Vorher-/Nachher-Protokolle, unabhängig vom Fortbestand des Reports          |
-| `metadata`     | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat  |
+| Tabelle        | Inhalt                                                                                                                                                                                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seasons`      | Eine Zeile je Server und Season mit Startdatum, Format, Spieltagen und Redraft. `is_current` kennzeichnet die aktive Season, `rounds_json` enthält ihren Wochenplan.                                                                      |
+| `reports`      | Eine Zeile je Match mit Runde, beiden Spieler-IDs und damaligen Namen, Gewinner, Verlierer, Score, Replay-Link, Melder und Veröffentlichungsstatus. `pending_change_json` hält einen unterbrochenen Bearbeitungs- oder Löschauftrag fest. |
+| `audit_events` | Eine Zeile je Aktion mit Zeitpunkt, handelnder Person, Server, Season, Kanal, Report- und Nachrichten-ID. `before_json` und `after_json` bewahren die damaligen Stände auch nach einer Löschung.                                          |
+| `metadata`     | Initialisierungsmarker; `application_id` und `user_version` kennzeichnen das Dateiformat                                                                                                                                                  |
 
 Das Protokoll enthält bewusst auch Gewinner und Score. Die beschriebene Rollenfreigabe gilt daher für den Abruf. Bot-Tokens werden nicht in SQLite gespeichert.
 
-Die Tabellenstruktur bleibt gleich. Neue Einstellungen ergänzen `format`, `redraft`, gegebenenfalls `playoffsFrom` und den geordneten Wochenplan `rounds`; frühere Pläne werden ohne verschachtelte Historien in derselben Settings-Zeile aufbewahrt. Reports speichern eine geprüfte `round`-Momentaufnahme mit fester ID. Nur Ligaspiele haben zusätzlich `matchday`; Playoffs tragen ihre eigene Runde, Pausen werden nie als Report gespeichert. Alte Datensätze mit ausschließlich `matchday` sowie bestehende Änderungsvormerkungen bleiben lesbar. Backups enthalten auch die historischen Pläne.
+Zum Nachschauen im SQLite-Browser die Ansicht **`report_overview`** öffnen. Sie zeigt die Spieler, Gewinner und Verlierer als Namen neben Season, Runde, Ergebnis und Replay-Link. Discord-IDs bleiben als Text gespeichert. Playoffs haben eine Runden-ID und keinen numerischen Spieltag. Bei älteren Replays ohne bekanntes Ergebnis bleiben Gewinner, Verlierer und Score leer.
+
+Beim ersten Start mit einer SQLite-Datei aus Bot 2.0 (**Schema 1**) prüft der Bot die Daten und erstellt im selben Datenverzeichnis eine geprüfte Kopie unter `migration-sqlite-v1-…/liga.sqlite`. Danach übernimmt er Reports, Seasonhistorie und Log mit ihren bisherigen IDs und Zeitstempeln in **Schema 2**. Die Umstellung läuft in einer Transaktion. Bei einem Fehler bleibt die ursprüngliche Tabellenstruktur erhalten. Die Kopie vor der Migration gehört nicht zur täglichen Backup-Rotation. Für eine Rückkehr zum alten Bot bei angehaltenem Dienst diese Kopie zurückspielen. Sie enthält den Stand vor der Umstellung.
+
+Die Replay-Suche liest für die Namens- und Rundenauswahl nur die nötigen Spalten. Anschließend lädt sie Links für den gewählten Spieler, die gewünschte Runde und die lesbaren Kanäle. Für Statistiken zählt `LigaDatabase.countResults(guildId, playerId, channelIds, { opponentId, season })` Siege und Niederlagen direkt in SQL. Die Liste bereits freigegebener Kanäle ist Pflicht. Gegner und Season sind optional. Es zählen veröffentlichte Reports mit bekanntem Ergebnis. Das Ergebnis besteht aus `wins` und `losses` und wird bei jedem Abruf neu berechnet.
 
 Beim ersten Start ohne initialisierte Datenbank werden vorhandene `league-settings.json` und `matches.json` geprüft. Eine zusätzliche Kopie entsteht unter `migration-json-…/`. Einstellungen, IDs, Versandvormerkungen und unterbrochene Änderungen werden transaktional übernommen. Die Originaldateien bleiben unverändert und werden danach nicht mehr als aktiver Speicher eingelesen.
 
@@ -304,11 +308,11 @@ Die Module lassen sich ohne automatischen Bot-Start importieren. Erst der CLI-Au
 
 Nach erfolgreichem Start gibt `startBot()` Client, Datenspeicher und Backup-Timer an den Aufrufer zurück. Bei einem Startfehler schließt es seine bereits geöffneten Ressourcen und reicht den Fehler weiter. Die Entscheidung, den Prozess mit einem Fehlercode zu beenden, liegt beim CLI-Einstieg. `npm start`, die Befehle und die Konfiguration bleiben gleich.
 
-Der Standard-Datenordner bleibt `data/` im Projektverzeichnis. `DATA_DIR`, Railway-Volumes und die bestehenden SQLite-/JSON-Dateien werden durch die Quelltextstruktur nicht verschoben; für dieses Aufräumen ist keine Datenmigration nötig.
+Der Standard-Datenordner ist `data/` im Projektverzeichnis. Auf Railway liegt die Datenbank auf dem konfigurierten Volume. Die automatische Schemamigration verwendet dasselbe Verzeichnis.
 
 Die Speicher-Schnittstellen verwenden die JSDoc-Typen aus `src/shared/data-types.js`. Ein Spieler besteht aus der dauerhaften Discord-ID und einem gespeicherten Anzeigenamen. Ein Match enthält Server, Kanal, Season, Runde, zwei Teilnehmer und Replay-Link; Melder, Ergebnis, Versandstatus und laufende Änderungen ergänzen den Report. Die Reihenfolge der gespeicherten Teilnehmer sagt nichts über Gewinner oder Verlierer aus. Season-Einstellungen enthalten Nummer, Anzahl der regulären Spieltage, Startdatum und gegebenenfalls den Wochenplan; die aktuelle Runde wird beim Lesen berechnet. Ältere manuelle Einstellungen und Reports mit ausschließlich einem numerischen Spieltag bleiben lesbar. Die Typbeschreibungen unterstützen den Editor; die Laufzeitvalidierung bleibt in den Speichermodulen.
 
-Beide Speicher aktualisieren ihren Zustand erst nach erfolgreichem Schreiben. SQLite speichert Report und zugehörigen Logeintrag weiterhin in derselben Transaktion. Die JSON-Kompatibilität verwendet eine gemeinsame Hilfsfunktion: Sie schreibt in eine exklusiv angelegte temporäre Datei im Zielordner und ersetzt danach die Zieldatei per Umbenennung. Bei Fehlern bleibt der vorherige Stand erhalten; die Bereinigung entfernt nur die selbst angelegte temporäre Datei. Schlägt auch die Bereinigung fehl, bleiben beide Fehlerursachen für die Diagnose verfügbar. Datenformat und Konfiguration ändern sich dadurch nicht.
+SQLite schreibt bei einer Meldung, Korrektur oder Löschung nur den betroffenen Report und seinen zugehörigen Logeintrag in derselben Transaktion. Bei einem Seasonwechsel bleibt der vorherige Plan als eigene Zeile erhalten. Die Kompatibilität mit älteren JSON-Dateien verwendet weiterhin atomare Dateischreibvorgänge.
 
 ## Technische Fehlerprotokolle
 
