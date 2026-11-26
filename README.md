@@ -192,7 +192,15 @@ Treffer kommen als normale DMs. Gesperrte DMs oder teilweise fehlgeschlagener Ve
 
 Nur `spieler` ist Pflicht. Ohne `gegner` erhältst du die Bilanz gegen alle Gegner, ohne `season` über alle gespeicherten Seasons. Die Namen kommen aus der aktuellen Teilnehmerrolle und aus veröffentlichten Reports in für dich lesbaren Kanälen. Frühere Namen funktionieren ebenfalls. Bei Namensgleichheit den passenden Vorschlag anhand der Discord-ID auswählen.
 
-Die DM nennt Anzahl der Matches, Siege, Niederlagen und die Winrate aus Sicht des zuerst gewählten Spielers. Vier Siege und eine Niederlage ergeben 80 %. Es zählen nur veröffentlichte Matches mit bekanntem Gewinner, einschließlich Playoffs. Bei null Matches steht das in der DM. Nach einer Korrektur oder Löschung liefert ein neuer Aufruf die aktuelle Bilanz. Im Server siehst nur du die Zustellbestätigung oder den Hinweis auf gesperrte DMs.
+Die DM zeigt die Bilanz aus Sicht des zuerst gewählten Spielers. So kann die Antwort auf `/winrate spieler:Jan gegner:Lennart` aussehen.
+
+```text
+Jan gegen Lennart · Alle Seasons
+5 Duelle · 4 Siege · 1 Niederlage
+80 % Winrate für Jan
+```
+
+Es zählen nur veröffentlichte Matches mit bekanntem Gewinner, einschließlich Playoffs. Bei null Matches steht das in der DM. Nach einer Korrektur oder Löschung liefert ein neuer Aufruf die aktuelle Bilanz. Im Server siehst nur du die Zustellbestätigung oder den Hinweis auf gesperrte DMs.
 
 ### Änderungsprotokoll anfordern
 
